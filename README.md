@@ -30,7 +30,7 @@ O provider inicial e fake e funciona sem rede. Google Places ainda nao esta impl
 - `tests`: unitarios, integracao SQLite e pipeline fake;
 - `prospector-de-sites`: implementacao original preservada como legado.
 
-O SQLite operacional fica em `${PLUGIN_DATA}/business-prospector.db`, fora do diretorio instalado do plugin. Atualizar ou reinstalar o Git nao deve apagar o banco.
+No formato Agent Plugins, o SQLite operacional fica em `${PLUGIN_DATA}/business-prospector.db`. No fallback Claude usado pelo OpenClaw 2026.7.1, fica em `~/.openclaw/data/business-prospector/business-prospector.db`. Nos dois casos, atualizar ou reinstalar o Git nao deve apagar o banco.
 
 ## Instalacao local
 
@@ -52,13 +52,17 @@ Por padrao o demo cria o banco em um diretorio temporario. Use `--database /cami
 
 ## OpenClaw
 
-O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Skills como filhos imediatos de `skills/`.
+O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Skills como filhos imediatos de `skills/`. O OpenClaw 2026.7.1 foi publicado antes do suporte a esse formato e nao examina o `plugin.json` da raiz. Para ele, `.mcp.json` oferece uma camada de compatibilidade Claude com os mesmos servidores MCP. Em uma versao que suporte Agent Plugins, a precedencia do detector escolhe `plugin.json` antes desse fallback.
 
-1. Instale as dependencias no Python 3 que estara no `PATH` do processo OpenClaw:
+1. Crie o runtime Python persistente do MCP, separado do `.venv` de desenvolvimento:
 
    ```bash
-   python3 -m pip install /caminho/para/business-prospector
+   cd /caminho/para/business-prospector
+   python3 scripts/setup_openclaw_runtime.py
+   bin/business-prospector-mcp --check
    ```
+
+   O instalador cria `~/.openclaw/venvs/business-prospector` e instala o pacote e suas dependencias. O launcher sempre executa o `run_mcp.py` do bundle atual com esse Python. Para usar outro ambiente deliberadamente, configure `BUSINESS_PROSPECTOR_PYTHON` com o caminho absoluto do interpretador.
 
 2. Para desenvolvimento local, revise o codigo e vincule o bundle:
 
@@ -68,10 +72,18 @@ O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Ski
    ```
 
 3. Se a configuracao usa `plugins.allow`, inclua `business-prospector`.
-4. Inspecione o carregamento com `openclaw plugins inspect business-prospector` e confirme os MCPs `business-prospector` e `playwright`.
+4. Inspecione o carregamento e confirme os MCPs `business-prospector` e `playwright`:
+
+   ```bash
+   openclaw plugins inspect business-prospector --runtime
+   openclaw plugins inspect business-prospector --json
+   openclaw plugins doctor
+   ```
+
+   No OpenClaw 2026.7.1, o formato continuara sendo `claude`, mas `mcpServers` deve deixar de estar vazio. Para obter `bundleFormat: agent`, atualize para uma versao que contenha o suporte a Agent Plugins.
 5. Inicie uma nova sessao do Oliver Queen e use `prospector-setup` ou solicite uma prospeccao. Enquanto o provider for `fake`, use `business-prospector__prospect_fake` para validacao offline.
 
-O OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` ao iniciar o MCP. Nenhum path absoluto do autor ou de Windows e necessario.
+No formato Agent Plugins, o OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` ao iniciar o MCP. No fallback 2026.7.1, expande `${CLAUDE_PLUGIN_ROOT}`. Nenhum path absoluto do autor ou de Windows e necessario.
 
 Documentacao oficial usada para o bundle:
 

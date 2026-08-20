@@ -3,8 +3,8 @@
   "mcpServers": {
     "business-prospector": {
       "type": "stdio",
-      "command": "python3",
-      "args": ["${PLUGIN_ROOT}/run_mcp.py"],
+      "command": "./bin/business-prospector-mcp",
+      "args": [],
       "cwd": "${PLUGIN_ROOT}",
       "env": {
         "BUSINESS_PROSPECTOR_DATA_DIR": "${PLUGIN_DATA}",

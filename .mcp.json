@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "business-prospector": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/business-prospector-mcp",
+      "args": [],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}",
+      "env": {
+        "BUSINESS_PROSPECTOR_CONFIG": "${CLAUDE_PLUGIN_ROOT}/config/default.json"
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@0.0.79"]
+    }
+  }
+}

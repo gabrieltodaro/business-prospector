@@ -29,7 +29,9 @@ def _root() -> Path:
 
 def _data_dir() -> Path:
     configured = os.environ.get("BUSINESS_PROSPECTOR_DATA_DIR")
-    return Path(configured).expanduser().resolve() if configured else (_root() / "data").resolve()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (Path.home() / ".openclaw" / "data" / "business-prospector").resolve()
 
 
 def _config_path() -> Path:

@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+PLUGIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+DEFAULT_PYTHON="${HOME}/.openclaw/venvs/business-prospector/bin/python"
+
+if [ -n "${BUSINESS_PROSPECTOR_PYTHON:-}" ]; then
+  PROSPECTOR_PYTHON=$BUSINESS_PROSPECTOR_PYTHON
+elif [ -x "$DEFAULT_PYTHON" ]; then
+  PROSPECTOR_PYTHON=$DEFAULT_PYTHON
+elif command -v python3 >/dev/null 2>&1 && python3 -c 'import mcp' >/dev/null 2>&1; then
+  PROSPECTOR_PYTHON=$(command -v python3)
+else
+  echo "business-prospector: Python runtime not installed." >&2
+  echo "Run: python3 scripts/setup_openclaw_runtime.py" >&2
+  exit 78
+fi
+
+if [ "${1:-}" = "--check" ]; then
+  PYTHONPATH="$PLUGIN_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PROSPECTOR_PYTHON" -c 'import mcp, business_prospector; print("business-prospector MCP runtime: ok")'
+  exit 0
+fi
+
+exec "$PROSPECTOR_PYTHON" "$PLUGIN_DIR/run_mcp.py" "$@"
+
