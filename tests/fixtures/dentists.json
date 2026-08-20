@@ -1,0 +1,136 @@
+[
+  {
+    "business": {
+      "name": "Odonto Catanduva Prime",
+      "category": "dentista",
+      "city": "Catanduva",
+      "rating": 4.9,
+      "review_count": 230,
+      "website_url": "https://odontoprime.example.com",
+      "address": "Rua Brasil, 100, Catanduva - SP",
+      "phone": "(17) 3522-1000",
+      "whatsapp": "5517999991000",
+      "whatsapp_confirmed": true,
+      "whatsapp_source": "website_link",
+      "source": "fake"
+    },
+    "assessment": {
+      "layout": true,
+      "mobile": true,
+      "cta": true,
+      "content": true,
+      "social_proof": true,
+      "platform": false,
+      "reason": "Layout antigo, quebra no celular, CTA fraco e avaliações ausentes no site."
+    }
+  },
+  {
+    "business": {
+      "name": "Clinica Sorriso Moderno",
+      "category": "dentista",
+      "city": "Catanduva",
+      "rating": 4.8,
+      "review_count": 110,
+      "website_url": "https://sorrisomoderno.example.com",
+      "phone": "(17) 3522-2000",
+      "whatsapp_source": "google_business_phone",
+      "source": "fake"
+    },
+    "assessment": {
+      "layout": false,
+      "mobile": false,
+      "cta": false,
+      "content": false,
+      "social_proof": false,
+      "platform": false,
+      "reason": "Site moderno e responsivo."
+    }
+  },
+  {
+    "business": {
+      "name": "Dentista Popular Catanduva",
+      "category": "dentista",
+      "city": "Catanduva",
+      "rating": 4.4,
+      "review_count": 300,
+      "website_url": "https://dentistapopular.example.com",
+      "email": "contato@dentistapopular.example.com",
+      "source": "fake"
+    },
+    "assessment": {
+      "layout": true,
+      "mobile": true,
+      "cta": true,
+      "content": true,
+      "social_proof": true,
+      "platform": false,
+      "reason": "Reprovado pela reputacao antes do assessment."
+    }
+  },
+  {
+    "business": {
+      "name": "Dra Ana Implantes",
+      "category": "dentista",
+      "city": "Catanduva",
+      "rating": 5.0,
+      "review_count": 12,
+      "website_url": "https://draana.example.com",
+      "instagram": "https://instagram.com/draana",
+      "source": "fake"
+    },
+    "assessment": {
+      "layout": true,
+      "mobile": true,
+      "cta": true,
+      "content": false,
+      "social_proof": true,
+      "platform": false,
+      "reason": "Reprovado pela quantidade de avaliacoes antes do assessment."
+    }
+  },
+  {
+    "business": {
+      "name": "Centro Odontologico Catanduva",
+      "category": "dentista",
+      "city": "Catanduva",
+      "rating": 4.8,
+      "review_count": 95,
+      "website_url": null,
+      "phone": "(17) 99999-5000",
+      "whatsapp_source": "google_business_phone",
+      "source": "fake"
+    },
+    "assessment": {
+      "layout": false,
+      "mobile": false,
+      "cta": false,
+      "content": false,
+      "social_proof": false,
+      "platform": false,
+      "reason": "Sem website proprio; fora do fluxo principal do MVP."
+    }
+  },
+  {
+    "business": {
+      "name": "Odonto Familia Catanduva",
+      "category": "dentista",
+      "city": "Catanduva",
+      "rating": 4.8,
+      "review_count": 140,
+      "website_url": "https://odontofamilia.example.com",
+      "phone": "(17) 99999-6000",
+      "whatsapp_source": "google_business_phone",
+      "email": "contato@odontofamilia.example.com",
+      "source": "fake"
+    },
+    "assessment": {
+      "layout": true,
+      "mobile": false,
+      "cta": true,
+      "content": true,
+      "social_proof": false,
+      "platform": true,
+      "reason": "Template datado em subdominio, CTA pouco visivel e conteudo desorganizado."
+    }
+  }
+]

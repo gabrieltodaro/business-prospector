@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gapps-business-prospector"
+version = "0.1.0"
+description = "OpenClaw prospecting MVP for Gapps Tecnologia"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.2,<2"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+

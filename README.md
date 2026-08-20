@@ -1,82 +1,118 @@
-# Prospector de Sites — Plugin para Google Antigravity
+# business-prospector
 
-Prospecção semiautomática de clientes com site fraco, redesign premium, publicação na HostGator e proposta por e-mail — empacotado como **Plugin do Antigravity** (Agy 2.0 / IDE / CLI compartilham a mesma config).
+MVP de prospeccao local da **Gapps Tecnologia** para **OpenClaw**, operado pelo agente **Oliver Queen**. O objetivo atual e encontrar empresas brasileiras com boa reputacao e website fraco, estruturar a avaliacao, evitar duplicatas, calcular um score deterministico e persistir os melhores leads em SQLite.
 
-É a mesma lógica da versão Claude, no formato nativo do Antigravity: um **plugin** (`plugin.json` + `mcp_config.json` + `skills/`). A busca de negócios usa o plugin oficial **Google Maps Platform** (Places); o navegador entra só pra avaliar o site do lead.
+Este fork deriva de `ArrecheNeto/gemini-prospector`, criado por Helio Arreche. Os componentes originais foram preservados em `prospector-de-sites/` para trabalho futuro; eles nao participam do fluxo ativo do MVP.
 
-## Estrutura do plugin
+## Escopo ativo
 
-```
-prospector-de-sites/          ← esta é a pasta do plugin
-├── plugin.json               marcador do plugin
-├── mcp_config.json           define os MCP (CRM + navegador Playwright)
-├── prospector-mcp.py         servidor MCP do CRM (SQLite)
-├── skills/                   as 7 skills (SKILL.md)
-│   ├── prospector-setup/
-│   ├── prospeccao-maps/
-│   ├── redesign-premium/
-│   ├── proposta-gmail/
-│   ├── deploy-hostgator/
-│   ├── dashboard-leads/
-│   └── contrato-servico/
-└── dashboard/                painel local (Python/SQLite)
+```text
+DiscoveryProvider
+  -> filtros configuraveis de reputacao
+  -> deduplicacao em camadas
+  -> WebsiteAssessmentProvider / Playwright
+  -> flags estruturadas do website
+  -> scoring Python 0-100
+  -> SQLiteLeadRepository
+  -> ranking
 ```
 
-## Instalação
+O provider inicial e fake e funciona sem rede. Google Places ainda nao esta implementado. Playwright MCP `0.0.79` esta fixado no bundle para assessment de websites, evitando uma dependencia flutuante em `@latest`.
 
-### 1. Instalar o plugin
+## Arquitetura
 
-Copie a pasta `prospector-de-sites/` inteira para um dos locais que o Antigravity varre:
+- `src/business_prospector/domain`: modelos, validacao, normalizacao e scoring;
+- `src/business_prospector/application`: casos de uso, configuracao e Protocols dos providers/repository;
+- `src/business_prospector/infrastructure`: SQLite e providers fake;
+- `src/business_prospector/mcp`: tools estruturadas do MVP;
+- `skills`: Skills ativas do OpenClaw;
+- `config/default.json`: thresholds, limites, cidades e pesos;
+- `tests`: unitarios, integracao SQLite e pipeline fake;
+- `prospector-de-sites`: implementacao original preservada como legado.
 
-- **Global (todos os projetos):** `~/.gemini/config/plugins/prospector-de-sites/`
-  (no Windows: `C:\Users\SEU_USUARIO\.gemini\config\plugins\prospector-de-sites\`)
-- **Só no projeto atual:** `.agents/plugins/prospector-de-sites/` na raiz do workspace aberto.
+O SQLite operacional fica em `${PLUGIN_DATA}/business-prospector.db`, fora do diretorio instalado do plugin. Atualizar ou reinstalar o Git nao deve apagar o banco.
 
-> Se a pasta `~/.gemini/config/plugins/` não existir ainda, crie ela. (Foi o erro "cannot find the path specified" que apareceu ao baixar um plugin bundled — o Antigravity espera essa pasta existir.)
+## Instalacao local
 
-As **skills** carregam sozinhas — não precisa copiar nada pra `~/.gemini/skills` na mão.
+Requer Python 3.11+ e, para o browser MCP, Node.js 18+ com `npx`.
 
-### 2. Ajustar o `mcp_config.json` do plugin
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
+.venv/bin/python -m pytest
+```
 
-Abra `prospector-de-sites/mcp_config.json` e corrija os dois caminhos do `prospector-crm`:
+Pipeline simulado, sem rede:
 
-- o caminho do `prospector-mcp.py` (dentro da pasta do plugin);
-- o `--pasta` = a pasta do seu projeto (onde ficam `prospector.db`, os leads e os sites).
+```bash
+.venv/bin/python -m business_prospector.demo --niche dentistas --city Catanduva
+```
 
-O Antigravity lê esse `mcp_config.json` do plugin automaticamente. Se preferir, dá pra adicionar/gerenciar os MCP pela interface: **Settings → Permissions → MCP Tools → Add** (nome + servidor).
+Por padrao o demo cria o banco em um diretorio temporario. Use `--database /caminho/seguro/prospector.db` apenas quando quiser preservar o resultado.
 
-### 3. Instalar o plugin Google Maps Platform (a fonte da prospecção)
+## OpenClaw
 
-Em **Settings → Customizations → Build with Google**, baixe o plugin **Google Maps Platform**. Ele dá as ferramentas de Places (buscar negócios, ler nota, nº de avaliações, site, telefone) que a skill `prospeccao-maps` usa. Precisa de uma **API key do Google Maps Platform** (tem cota grátis mensal).
+O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Skills como filhos imediatos de `skills/`.
 
-> Sem o plugin do Maps, a prospecção ainda funciona no modo navegador (raspando o Google Maps pelo Playwright) — só é menos confiável.
+1. Instale as dependencias no Python 3 que estara no `PATH` do processo OpenClaw:
 
-### 4. Configurar o Prospector
+   ```bash
+   python3 -m pip install /caminho/para/business-prospector
+   ```
 
-Abra a pasta do projeto e diga no chat: **"configurar o prospector"**. A skill `prospector-setup` coleta seus dados, a conexão HostGator e instala o painel local.
+2. Para desenvolvimento local, revise o codigo e vincule o bundle:
 
-## Como usar (linguagem natural)
+   ```bash
+   openclaw plugins install -l /caminho/para/business-prospector
+   openclaw plugins enable business-prospector
+   ```
 
-1. **"prospecta nutricionistas em São Paulo"** → busca no Google Maps Platform, qualifica (nota alta + site ruim + e-mail) e monta o dashboard.
-2. **"redesenha os 5 melhores"** → redesign premium + editor + comparador antes/depois.
-3. **"publica na HostGator"** → sobe as páginas e a capa, verifica HTTPS.
-4. **"manda a proposta"** → rascunho anti-spam no Gmail.
-5. Depois: contrato, e o `dashboard.html` administra tudo (kanban + financeiro).
+3. Se a configuracao usa `plugins.allow`, inclua `business-prospector`.
+4. Inspecione o carregamento com `openclaw plugins inspect business-prospector` e confirme os MCPs `business-prospector` e `playwright`.
+5. Inicie uma nova sessao do Oliver Queen e use `prospector-setup` ou solicite uma prospeccao. Enquanto o provider for `fake`, use `business-prospector__prospect_fake` para validacao offline.
 
-## Diferenças pra versão Claude
+O OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` ao iniciar o MCP. Nenhum path absoluto do autor ou de Windows e necessario.
 
-| | Claude Cowork | Antigravity |
-|---|---|---|
-| Empacotamento | plugin (.claude-plugin) | plugin (`plugin.json` + `mcp_config.json` + `skills/`) |
-| Onde instala | marketplace | `~/.gemini/config/plugins/` (ou `.agents/plugins/`) |
-| Comandos | `/prospectar`… | linguagem natural aciona a skill |
-| Busca no Maps | Claude in Chrome | **plugin Google Maps Platform** (Places) + navegador |
-| Navegador | Claude in Chrome | MCP Playwright / plugin Chrome DevTools |
-| CRM | MCP stdio | mesmo MCP, no `mcp_config.json` do plugin |
-| E-mail | conector Gmail | plugin/MCP Gmail do Google, ou link de compose |
+Documentacao oficial usada para o bundle:
 
-Mesma lógica, mesmos entregáveis. O CRM (`prospector-mcp.py`), o painel e as templates são reaproveitados sem mudança.
+- [OpenClaw plugin bundles](https://docs.openclaw.ai/plugins/bundles)
+- [OpenClaw plugins CLI](https://docs.openclaw.ai/cli/plugins)
+- [OpenClaw Skills](https://docs.openclaw.ai/skills)
+- [Agent Plugins MCP servers](https://agent-plugins.org/plugin-authors/mcp-servers)
 
----
+## Deduplicacao
 
-Feito por **Helio Arreche**.
+A ordem e explicita e testada:
+
+1. `external_place_id`: correspondencia exata;
+2. dominio normalizado: duplicata provavel;
+3. telefone/WhatsApp normalizado: duplicata provavel;
+4. nome normalizado + cidade: duplicata possivel;
+5. endereco normalizado: duplicata possivel.
+
+## Scoring
+
+O LLM registra somente observacoes estruturadas. Python calcula o resultado:
+
+- Business Quality: ate 40, usando rating e review count;
+- Website Opportunity: ate 40, usando a quantidade de problemas, com teto em quatro;
+- Contactability: ate 20, priorizando WhatsApp confirmado, telefone, e-mail e Instagram.
+
+Pesos e filtros estao centralizados em `config/default.json` e serao calibrados com leads reais.
+
+## Fora do MVP ativo
+
+Dashboard, redesign/criacao de website, envio de WhatsApp ou e-mail, propostas, contratos, financeiro, follow-ups, deploy, HostGator, Locaweb, Google Sheets e `leads.md`.
+
+## Google Places
+
+O codigo contem apenas a abstracao `BusinessDiscoveryProvider`; nenhuma chamada Google e feita. Siga [GOOGLE PLACES SETUP REQUIRED](docs/google-places-setup.md) para preparar a credencial de forma segura. Depois disso sera implementado `GooglePlacesBusinessDiscoveryProvider`, preferencialmente com Places API (New), sem alterar as regras de negocio.
+
+## Seguranca
+
+- secrets e bancos locais sao ignorados pelo Git;
+- URLs aceitas pelo dominio devem ser absolutas e `http(s)`;
+- dados de websites sao explicitamente nao confiaveis nas Skills;
+- o MCP nao envia mensagens nem executa deploy;
+- o SQLite usa context managers, timeout, busy timeout e WAL;
+- logs nao incluem credenciais nem payloads completos de websites.
