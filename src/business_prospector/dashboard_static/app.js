@@ -90,9 +90,15 @@ function openDetail(lead) {
   el('detail-title').textContent=lead.name; const content=el('detail-content'); content.replaceChildren();
   content.append(detailSection('Negócio', [['Categoria',lead.category],['Cidade',lead.city],['Endereço',lead.address],['Google Maps',externalLink(lead.maps_url,'Abrir no Maps')],['Place ID',lead.external_place_id],['Avaliação',`${lead.rating} · ${lead.review_count} avaliações`]]));
   const flags=['layout','mobile','cta','content','social_proof','platform'].filter(key=>lead.assessment?.[key]).join(', ')||'Nenhum flag registrado';
-  content.append(detailSection('Website', [['Website',externalLink(lead.website_url,'Abrir website')],['Assessment','Flags legados persistidos'],['Problemas',lead.website_issue_count],['Flags',flags],['Qualificação',lead.assessment?.reason]]));
+  content.append(detailSection('Website', [['Website',externalLink(lead.website_url,'Abrir website')],['Assessment',lead.assessment_status||'Flags legados persistidos'],['Verificado em',lead.assessment_checked_at],['Problemas',lead.website_issue_count],['Flags',flags],['Qualificação',lead.assessment?.reason]]));
+  if(lead.website_assessment?.criteria){
+    const evidence=node('section','detail-section');evidence.append(node('h3','','Evidência estruturada'));
+    Object.entries(lead.website_assessment.criteria).forEach(([name,criterion])=>{
+      evidence.append(detailSection(name,[['Outcome',criterion.outcome],['Facts',(criterion.facts||[]).join(' · ')||'—'],['Inference',criterion.inference||'—']]));
+    });content.append(evidence);
+  }
   content.append(detailSection('Contatos', [['Telefone',lead.phone],['WhatsApp',lead.whatsapp],['Confirmado',lead.whatsapp_confirmed?'Sim':'Não'],['Fonte WhatsApp',lead.whatsapp_source],['E-mail',lead.email],['Instagram',externalLink(lead.instagram,'Abrir Instagram')]]));
-  content.append(detailSection('Prospecção', [['Score',lead.score],['Status',labels[visualStatus(lead.status)]||lead.status],['Fonte',lead.source],['Descoberto em',lead.discovered_at],['Última verificação',lead.last_checked_at]]));
+  content.append(detailSection('Prospecção', [['Score',lead.score],['Status',labels[visualStatus(lead.status)]||lead.status],['Batch',lead.batch_id],['Fonte',lead.source],['Descoberto em',lead.discovered_at],['Última verificação',lead.last_checked_at]]));
   el('scrim').hidden=false; el('inspector').classList.add('open');el('inspector').setAttribute('aria-hidden','false');el('close-detail').focus();
 }
 function detailSection(title,rows){const section=node('section','detail-section');section.append(node('h3','',title));const dl=node('dl','');rows.forEach(([label,value])=>{const row=node('div','detail-row');row.append(node('dt','',label));const dd=node('dd','');if(value instanceof Node)dd.append(value);else dd.textContent=value===null||value===undefined||value===''?'—':String(value);row.append(dd);dl.append(row)});section.append(dl);return section}

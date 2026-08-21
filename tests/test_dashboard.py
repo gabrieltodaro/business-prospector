@@ -169,3 +169,5 @@ def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     assert "body:JSON.stringify({status})" in source
     assert "lead.status=previous" in source
     assert "calculate_score" not in source
+    assert "website_assessment" in source
+    assert "(criterion.facts||[]).join" in source

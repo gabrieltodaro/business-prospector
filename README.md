@@ -155,6 +155,10 @@ O assessment real e orquestrado por Oliver: Playwright produz snapshots de acess
 
 Contrato, criterios, seguranca, estados de falha e o TODO do futuro pipeline para empresas sem website estao em [Website assessment with Playwright MCP](docs/website-assessment.md).
 
+## Batch real
+
+Oliver orquestra uma descoberta Places limitada, prefiltragem deterministica, assessments Playwright sequenciais e qualificacao/salvamento por candidato. Python controla filtros, duplicatas, thresholds e score; leads qualificados chegam ao Kanban pelo mesmo SQLite. Arquitetura, outcomes, evidencia persistida, limites e validacao controlada estao em [Batch real de prospeccao](docs/real-batch.md).
+
 ## Seguranca
 
 - secrets e bancos locais sao ignorados pelo Git;

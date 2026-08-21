@@ -29,6 +29,9 @@ PIPELINE_STATUSES = (
 # `discarded`, which describes a commercial pipeline decision more accurately.
 VALID_STATUSES = set(PIPELINE_STATUSES) | {"rejected"}
 VALID_WHATSAPP_SOURCES = {"website_link", "google_business_phone", "manual", "unknown"}
+ASSESSMENT_PERSISTENCE_STATUSES = {
+    "assessed", "unavailable", "blocked", "timeout", "insufficient_evidence", "error",
+}
 
 
 def utc_now() -> str:
@@ -77,6 +80,26 @@ class BusinessCandidate:
     instagram: str | None = None
     source: str = "fake"
 
+    def __post_init__(self) -> None:
+        if not all(isinstance(value, str) for value in (self.name, self.category, self.city)):
+            raise ValidationError("candidate name, category and city must be strings")
+        if not self.name.strip() or not self.category.strip() or not self.city.strip():
+            raise ValidationError("candidate name, category and city are required")
+        if isinstance(self.rating, bool) or not isinstance(self.rating, (int, float)) or not 0 <= self.rating <= 5:
+            raise ValidationError("rating must be between 0 and 5")
+        if isinstance(self.review_count, bool) or not isinstance(self.review_count, int) or self.review_count < 0:
+            raise ValidationError("review_count cannot be negative")
+        for field_name, value in (("website_url", self.website_url), ("maps_url", self.maps_url), ("instagram", self.instagram)):
+            if value is not None and not isinstance(value, str):
+                raise ValidationError(f"{field_name} must be a string")
+        if self.whatsapp_confirmed and not self.whatsapp:
+            raise ValidationError("confirmed WhatsApp requires a number")
+        if self.whatsapp_source not in VALID_WHATSAPP_SOURCES:
+            raise ValidationError(f"invalid whatsapp_source: {self.whatsapp_source}")
+        validate_http_url(self.website_url, "website_url")
+        validate_http_url(self.maps_url, "maps_url")
+        validate_http_url(self.instagram, "instagram")
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -103,6 +126,10 @@ class Lead:
     score: int = 0
     status: str = "qualified"
     source: str = "manual"
+    website_assessment: dict[str, Any] | None = None
+    assessment_status: str | None = None
+    assessment_checked_at: str | None = None
+    batch_id: str | None = None
     discovered_at: str = field(default_factory=utc_now)
     last_checked_at: str = field(default_factory=utc_now)
     id: int | None = None
@@ -124,6 +151,16 @@ class Lead:
             raise ValidationError(f"invalid whatsapp_source: {self.whatsapp_source}")
         if self.whatsapp_confirmed and not self.whatsapp:
             raise ValidationError("confirmed WhatsApp requires a number")
+        if self.assessment_status is not None and self.assessment_status not in ASSESSMENT_PERSISTENCE_STATUSES:
+            raise ValidationError(f"invalid assessment_status: {self.assessment_status}")
+        if self.website_assessment is not None and not isinstance(self.website_assessment, dict):
+            raise ValidationError("website_assessment must be a validated object")
+        if self.website_assessment is not None and (
+            self.assessment_status is None or self.assessment_checked_at is None
+        ):
+            raise ValidationError("structured assessment requires status and checked_at")
+        if self.batch_id is not None and (not self.batch_id.strip() or len(self.batch_id) > 100):
+            raise ValidationError("batch_id must be a non-empty string up to 100 characters")
         validate_http_url(self.website_url, "website_url")
         validate_http_url(self.maps_url, "maps_url")
         validate_http_url(self.instagram, "instagram")

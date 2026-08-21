@@ -22,7 +22,7 @@ def test_fake_prospecting_end_to_end(tmp_path: Path) -> None:
     result = service(tmp_path).prospect("dentistas", "Catanduva")
     assert result.inspected == 6
     assert result.rejected_reputation == 2
-    assert result.rejected_no_website == 1
+    assert [item.name for item in result.deferred_first_website] == ["Centro Odontologico Catanduva"]
     assert result.rejected_website == 1
     assert result.duplicates == 0
     assert [(item.name, item.score) for item in result.leads] == [

@@ -10,6 +10,7 @@ from importlib.resources.abc import Traversable
 from mcp.server.fastmcp import FastMCP
 
 from business_prospector.application.config import ProspectingConfig
+from business_prospector.application.batch import BatchProspectingService
 from business_prospector.application.ports import SearchQuery
 from business_prospector.application.prospecting import ProspectingService
 from business_prospector.domain.exceptions import ProspectorError
@@ -224,6 +225,49 @@ def prospect_places(niche: str, city: str, limit: int = 10) -> dict[str, Any]:
     except (ProspectorError, ValueError, OSError) as exc:
         LOGGER.warning("prospect_places failed: %s", exc)
         return _response("prospect_places", error=str(exc))
+
+
+@mcp.tool()
+def prepare_batch_candidates(
+    candidates: list[dict[str, Any]],
+    target_qualified_leads: int = 10,
+    max_candidates: int = 25,
+    batch_id: str = "",
+) -> dict[str, Any]:
+    """Deterministically prefilter one bounded Places result before any browser work."""
+    try:
+        service = BatchProspectingService(
+            _repository(), ProspectingConfig.from_resource(_config_resource())
+        )
+        prepared = service.prepare(
+            candidates,
+            batch_id=batch_id or None,
+            target_qualified_leads=target_qualified_leads,
+            max_candidates=max_candidates,
+        )
+        return _response("prepare_batch_candidates", prepared.to_dict())
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        LOGGER.warning("prepare_batch_candidates failed: %s", exc)
+        return _response("prepare_batch_candidates", error=str(exc))
+
+
+@mcp.tool()
+def qualify_and_save_candidate(
+    candidate: dict[str, Any],
+    assessment: dict[str, Any],
+    batch_id: str,
+    contacts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate evidence, recheck duplicates, score in Python, and save one qualified lead."""
+    try:
+        service = BatchProspectingService(
+            _repository(), ProspectingConfig.from_resource(_config_resource())
+        )
+        outcome = service.qualify_and_save(candidate, assessment, batch_id, contacts)
+        return _response("qualify_and_save_candidate", outcome.to_dict())
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        LOGGER.warning("qualify_and_save_candidate failed: %s", exc)
+        return _response("qualify_and_save_candidate", error=str(exc))
 
 
 @mcp.tool()

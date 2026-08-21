@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -8,8 +9,9 @@ from business_prospector.application.ports import DuplicateMatch
 from business_prospector.domain.exceptions import LeadNotFoundError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
 from business_prospector.domain.normalization import normalize_address, normalize_domain, normalize_phone, normalize_text
+from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 LEAD_COLUMNS = (
     "id", "external_place_id", "slug", "name", "normalized_name", "category", "city",
@@ -57,7 +59,11 @@ CREATE TABLE IF NOT EXISTS leads (
     status TEXT NOT NULL DEFAULT 'qualified' CHECK (status IN ('new','qualified','needs_review','contacted','proposal','closed','discarded','rejected')),
     source TEXT NOT NULL,
     discovered_at TEXT NOT NULL,
-    last_checked_at TEXT NOT NULL
+    last_checked_at TEXT NOT NULL,
+    website_assessment_json TEXT,
+    assessment_status TEXT,
+    assessment_checked_at TEXT,
+    batch_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_leads_external_place_id
     ON leads(external_place_id) WHERE external_place_id IS NOT NULL;
@@ -89,6 +95,9 @@ class SQLiteLeadRepository:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             if version == 1:
                 self._migrate_statuses(connection)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(leads)")}
+            if "website_assessment_json" not in columns:
+                self._migrate_structured_assessment(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     @staticmethod
@@ -110,6 +119,13 @@ class SQLiteLeadRepository:
             CREATE INDEX IF NOT EXISTS ix_leads_address ON leads(normalized_address);
             """
         )
+
+    @staticmethod
+    def _migrate_structured_assessment(connection: sqlite3.Connection) -> None:
+        connection.execute("ALTER TABLE leads ADD COLUMN website_assessment_json TEXT")
+        connection.execute("ALTER TABLE leads ADD COLUMN assessment_status TEXT")
+        connection.execute("ALTER TABLE leads ADD COLUMN assessment_checked_at TEXT")
+        connection.execute("ALTER TABLE leads ADD COLUMN batch_id TEXT")
 
     def save(self, lead: Lead) -> Lead:
         lead.validate()
@@ -199,6 +215,12 @@ class SQLiteLeadRepository:
     @staticmethod
     def _lead_values(lead: Lead) -> dict[str, Any]:
         a = lead.assessment
+        structured = None
+        if lead.website_assessment is not None:
+            report = WebsiteAssessmentReport.from_dict(lead.website_assessment)
+            if lead.assessment_status != report.status:
+                raise ValueError("assessment_status must match the structured report")
+            structured = report.to_dict()
         return {
             "external_place_id": lead.external_place_id,
             "slug": lead.slug,
@@ -234,6 +256,13 @@ class SQLiteLeadRepository:
             "source": lead.source,
             "discovered_at": lead.discovered_at,
             "last_checked_at": lead.last_checked_at,
+            "website_assessment_json": (
+                json.dumps(structured, ensure_ascii=False, separators=(",", ":"))
+                if structured is not None else None
+            ),
+            "assessment_status": lead.assessment_status,
+            "assessment_checked_at": lead.assessment_checked_at,
+            "batch_id": lead.batch_id,
         }
 
     @staticmethod
@@ -247,6 +276,11 @@ class SQLiteLeadRepository:
             platform=bool(row["website_issue_platform"]),
             reason=row["qualification_reason"],
         )
+        structured: dict[str, Any] | None = None
+        raw_structured = row["website_assessment_json"]
+        if raw_structured:
+            payload = json.loads(raw_structured)
+            structured = WebsiteAssessmentReport.from_dict(payload).to_dict()
         return Lead(
             id=row["id"], external_place_id=row["external_place_id"], slug=row["slug"], name=row["name"],
             category=row["category"], city=row["city"], address=row["address"], maps_url=row["maps_url"],
@@ -255,4 +289,6 @@ class SQLiteLeadRepository:
             whatsapp_source=row["whatsapp_source"], email=row["email"], instagram=row["instagram"],
             assessment=assessment, score=row["score"], status=row["status"], source=row["source"],
             discovered_at=row["discovered_at"], last_checked_at=row["last_checked_at"],
+            website_assessment=structured, assessment_status=row["assessment_status"],
+            assessment_checked_at=row["assessment_checked_at"], batch_id=row["batch_id"],
         )

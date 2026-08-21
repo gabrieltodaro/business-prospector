@@ -64,6 +64,25 @@ def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
     assert updated.name == original.name
     assert updated.status == "proposal"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(leads)")}
     assert "ix_leads_name_city" in indexes
+
+
+def test_schema_v2_adds_evidence_columns_and_preserves_legacy_rows(tmp_path: Path) -> None:
+    database = tmp_path / "v2.db"
+    repository = SQLiteLeadRepository(database)
+    original = repository.save(lead("Legacy"))
+    from business_prospector.infrastructure.sqlite_repository import LEAD_COLUMNS
+    columns = ", ".join(LEAD_COLUMNS)
+    with sqlite3.connect(database) as connection:
+        connection.execute(f"CREATE TABLE leads_v2 AS SELECT {columns} FROM leads")
+        connection.execute("DROP TABLE leads")
+        connection.execute("ALTER TABLE leads_v2 RENAME TO leads")
+        connection.execute("PRAGMA user_version = 2")
+
+    migrated = SQLiteLeadRepository(database).get(original.id or 0)
+    assert migrated is not None
+    assert migrated.name == "Legacy"
+    assert migrated.website_assessment is None
+    assert migrated.batch_id is None

@@ -14,7 +14,7 @@ class ProspectingResult:
     leads: list[Lead] = field(default_factory=list)
     inspected: int = 0
     rejected_reputation: int = 0
-    rejected_no_website: int = 0
+    deferred_first_website: list[BusinessCandidate] = field(default_factory=list)
     rejected_website: int = 0
     duplicates: int = 0
 
@@ -23,7 +23,7 @@ class ProspectingResult:
             "leads": [lead.to_dict() for lead in self.leads],
             "inspected": self.inspected,
             "rejected_reputation": self.rejected_reputation,
-            "rejected_no_website": self.rejected_no_website,
+            "deferred_first_website": [item.to_dict() for item in self.deferred_first_website],
             "rejected_website": self.rejected_website,
             "duplicates": self.duplicates,
         }
@@ -55,7 +55,7 @@ class ProspectingService:
                 # separate future opportunity type, not a permanently worthless/rejected lead.
                 # Build a distinct >=3.5-rating pipeline with competitor research and a
                 # from-scratch website strategy; do not mix it into redesign qualification.
-                result.rejected_no_website += 1
+                result.deferred_first_website.append(candidate)
                 continue
             if self._repository.find_duplicate(candidate):
                 result.duplicates += 1
