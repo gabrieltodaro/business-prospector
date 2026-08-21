@@ -6,6 +6,7 @@ from inspect import signature
 import pytest
 
 from business_prospector.application.config import ProspectingConfig
+from business_prospector.application.batch import BatchProspectingService
 from business_prospector.application.first_website import FirstWebsiteProspectingService
 from business_prospector.domain.exceptions import ValidationError
 from business_prospector.domain.first_website import FirstWebsiteMarketReport, is_first_website_candidate
@@ -268,7 +269,7 @@ def test_qualify_save_persists_type_research_batch_and_is_idempotent(tmp_path: P
     assert prospecting.qualify_and_save(candidate(), research(), "batch-first").outcome == "duplicate"
 
 
-def test_laura_place_id_change_returns_slug_conflict_without_mutation(tmp_path: Path) -> None:
+def test_distinct_place_ids_with_laura_slug_return_conflict_without_mutation(tmp_path: Path) -> None:
     prospecting, repository = service(tmp_path)
     name = (
         "Dra. Laura Baesso Dentista em Catanduva - Clareamento Dental, "
@@ -306,6 +307,72 @@ def test_laura_place_id_change_returns_slug_conflict_without_mutation(tmp_path: 
     assert unchanged is not None
     assert unchanged.external_place_id == "ChIJ1aw4jgEfvJQRwE_Iw9pSqGg"
     assert unchanged.batch_id == "batch-old"
+
+
+def test_real_laura_same_place_id_is_duplicate_through_full_batch_path(tmp_path: Path) -> None:
+    repository = SQLiteLeadRepository(tmp_path / "laura-operational-shape.db")
+    batch = BatchProspectingService(repository, ProspectingConfig())
+    prospecting = FirstWebsiteProspectingService(repository, ProspectingConfig())
+    name = (
+        "Dra. Laura Baesso Dentista em Catanduva - Clareamento Dental, "
+        "Estética e Harmonização Facial"
+    )
+    place_id = "ChIJ1aw4jgEfvJQRe9n-75bAEHo"
+    existing = repository.save(Lead(
+        name=name, category="dentist", city="Catanduva, SP", rating=4.9, review_count=200,
+        website_url="", external_place_id=place_id,
+        assessment=WebsiteAssessment(reason="first website"), batch_id="batch-b565b332",
+        opportunity_type="first_website", first_website_reason="no_website",
+        status="qualified", score=82,
+    ))
+    incoming = candidate(
+        name=name, category="dentist", city="Catanduva, SP", website_url=None,
+        external_place_id=place_id,
+    )
+
+    prepared = batch.prepare(
+        [incoming], batch_id="batch-36138a87", mode="first_website",
+        target_qualified_leads=1, max_candidates=1,
+    )
+    assert prepared.first_website_candidates == []
+    assert prepared.persistence_conflicts == []
+    assert len(prepared.duplicates) == 1
+    assert prepared.duplicates[0]["lead_id"] == existing.id
+    assert prepared.duplicates[0]["match"] == {
+        "rule": "external_place_id", "strength": "exact", "matched_against": "existing_lead",
+    }
+
+    # Defense in depth when orchestration bypasses preparation.
+    market_research = research()
+    for benchmark in market_research["benchmarks"]:  # type: ignore[union-attr]
+        benchmark["category"] = "dentist"
+    outcome = prospecting.qualify_and_save(incoming, market_research, "batch-36138a87")
+    assert outcome.outcome == "duplicate"
+    assert outcome.conflict is None
+    assert outcome.to_dict()["match"] == {
+        "rule": "external_place_id", "strength": "exact", "matched_against": "existing_lead",
+    }
+    assert len(repository.list()) == 1
+
+
+def test_same_place_id_is_global_across_slug_and_opportunity_type(tmp_path: Path) -> None:
+    repository = SQLiteLeadRepository(tmp_path / "global-identity.db")
+    existing = Lead(
+        name="Existing redesign", category="dentista", city="Catanduva", rating=4.9,
+        review_count=100, website_url="https://existing.example",
+        external_place_id="global-place", assessment=WebsiteAssessment(layout=True),
+        opportunity_type="redesign",
+    )
+    existing = repository.save(existing)
+    incoming = BusinessCandidate(
+        name="Completely different slug", category="dentista", city="Other City", rating=5,
+        review_count=500, website_url=None, external_place_id="global-place",
+    )
+    match = repository.find_duplicate(incoming)
+    assert match is not None
+    assert (match.lead_id, match.match_type, match.confidence) == (
+        existing.id, "external_place_id", "exact",
+    )
 
 
 def test_qualification_returns_insufficient_and_not_qualified_outcomes(tmp_path: Path) -> None:

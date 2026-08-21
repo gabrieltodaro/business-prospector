@@ -19,5 +19,9 @@ def fake_dentists_resource() -> Traversable:
     return resource("resources", "dentists.json")
 
 
+def site_demo_fixture_resource() -> Traversable:
+    return resource("resources", "site_demo.json")
+
+
 def dashboard_static_resource() -> Traversable:
     return resource("dashboard_static")

@@ -169,6 +169,8 @@ Oliver orquestra uma descoberta Places limitada, prefiltragem deterministica, as
 
 O fluxo separado de [oportunidades de primeiro site](docs/first-website.md) pesquisa 2–3 benchmarks de mercado, valida facts/inferences/recommendations e usa score proprio. `opportunity_type` distingue `redesign` de `first_website`; ambos compartilham identidade, SQLite, Kanban e os mesmos status comerciais.
 
+Leads `first_website` qualificados podem alimentar a [geração local de primeiro site](docs/site-generation.md). O gerador produz HTML/CSS original para revisão interna, preserva fatos desconhecidos como pendências e não publica nem contata o prospect.
+
 ## Seguranca
 
 - secrets e bancos locais sao ignorados pelo Git;

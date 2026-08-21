@@ -14,6 +14,7 @@ from business_prospector.application.batch import BatchProspectingService
 from business_prospector.application.first_website import FirstWebsiteProspectingService
 from business_prospector.application.ports import SearchQuery
 from business_prospector.application.prospecting import ProspectingService
+from business_prospector.application.site_generation import SiteGenerationService, controlled_sites_root
 from business_prospector.domain.exceptions import ProspectorError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
 from business_prospector.domain.scoring import calculate_score
@@ -46,6 +47,10 @@ def _config_resource() -> Traversable:
 
 def _repository() -> SQLiteLeadRepository:
     return SQLiteLeadRepository(_data_dir() / "business-prospector.db")
+
+
+def _sites_root() -> Path:
+    return controlled_sites_root(_data_dir())
 
 
 def _response(action: str, data: Any = None, error: str | None = None) -> dict[str, Any]:
@@ -377,6 +382,19 @@ def qualify_and_save_first_website_candidate(
         return _response("qualify_and_save_first_website_candidate", outcome.to_dict())
     except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         return _response("qualify_and_save_first_website_candidate", error=str(exc))
+
+
+@mcp.tool()
+def generate_first_website_draft(
+    lead: dict[str, Any], research: dict[str, Any], overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate one qualified first-website draft locally; never deploys or contacts anyone."""
+    try:
+        result = SiteGenerationService(_sites_root()).generate(lead, research, overwrite=overwrite)
+        return _response("generate_first_website_draft", result.to_dict(), result.error)
+    except (ProspectorError, TypeError, ValueError, OSError) as exc:
+        LOGGER.warning("generate_first_website_draft failed: %s", exc)
+        return _response("generate_first_website_draft", error=str(exc))
 
 
 @mcp.tool()

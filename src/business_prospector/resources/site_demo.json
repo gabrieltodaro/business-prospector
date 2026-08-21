@@ -1,0 +1,33 @@
+{
+  "lead": {
+    "name": "Clínica Sorriso Exemplo",
+    "slug": "clinica-sorriso-exemplo-catanduva-sp",
+    "category": "dentist",
+    "city": "Catanduva, SP",
+    "address": "Rua Exemplo, 100 - Catanduva, SP",
+    "phone": "+55 17 3000-0000",
+    "whatsapp": null,
+    "whatsapp_confirmed": false,
+    "instagram": "https://www.instagram.com/clinica_sorriso_exemplo",
+    "maps_url": "https://maps.google.com/?q=Clinica+Sorriso+Exemplo",
+    "rating": 4.9,
+    "review_count": 180,
+    "status": "qualified",
+    "opportunity_type": "first_website",
+    "batch_id": "fixture-first-website",
+    "external_place_id": "fixture-place-target"
+  },
+  "research": {
+    "status": "complete",
+    "benchmark_market": "São Paulo, SP",
+    "benchmarks": [
+      {"name": "Benchmark A", "website_url": "https://benchmark-a.example", "category": "dentist", "rating": 4.9, "review_count": 500, "external_place_id": "fixture-a", "facts": ["CTA de contato visível"], "features": ["contact_cta"]},
+      {"name": "Benchmark B", "website_url": "https://benchmark-b.example", "category": "dentist", "rating": 4.8, "review_count": 400, "external_place_id": "fixture-b", "facts": ["Informações de localização visíveis"], "features": ["contact_cta"]}
+    ],
+    "common_features": [{"feature": "contact_cta", "observed_in": 2, "total": 2}],
+    "inferences": ["Contato direto é um padrão recorrente no mercado"],
+    "recommendations": ["Criar um CTA original usando somente contato confirmado"],
+    "confidence": "high",
+    "failure_reason": null
+  }
+}
