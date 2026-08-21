@@ -10,6 +10,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from importlib.resources.abc import Traversable
 from urllib.parse import parse_qs, urlsplit
 
 from business_prospector.application.config import ProspectingConfig
@@ -22,6 +23,11 @@ from business_prospector.infrastructure.fake_providers import (
     FakeWebsiteAssessmentProvider,
 )
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
+from business_prospector.package_resources import (
+    dashboard_static_resource,
+    default_config_resource,
+    fake_dentists_resource,
+)
 
 LOGGER = logging.getLogger("business_prospector.dashboard")
 MAX_REQUEST_BODY = 4096
@@ -72,7 +78,7 @@ class DashboardApplication:
         return self.statuses.change(lead_id, status)
 
 
-def create_handler(application: DashboardApplication, static_dir: Path) -> type[BaseHTTPRequestHandler]:
+def create_handler(application: DashboardApplication, static_dir: Traversable) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         server_version = "BusinessProspectorDashboard"
 
@@ -220,9 +226,8 @@ def _default_database() -> Path:
 
 
 def _seed_demo(database: Path) -> None:
-    root = Path(__file__).resolve().parents[2]
-    fixture = root / "tests" / "fixtures" / "dentists.json"
-    config = ProspectingConfig.from_path(root / "config" / "default.json")
+    fixture = fake_dentists_resource()
+    config = ProspectingConfig.from_resource(default_config_resource())
     ProspectingService(
         FakeBusinessDiscoveryProvider(fixture),
         FakeWebsiteAssessmentProvider(fixture),
@@ -250,7 +255,7 @@ def main() -> int:
         _seed_demo(database)
 
     repository = SQLiteLeadRepository(database)
-    static_dir = Path(__file__).resolve().parent / "dashboard_static"
+    static_dir = dashboard_static_resource()
     server = ThreadingHTTPServer((args.host, args.port), create_handler(DashboardApplication(repository), static_dir))
     print(f"Business Prospector dashboard: http://{args.host}:{args.port}")
     print(f"SQLite source: {database}")

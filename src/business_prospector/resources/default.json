@@ -1,0 +1,26 @@
+{
+  "minimum_rating": 4.7,
+  "minimum_reviews": 40,
+  "target_leads": 10,
+  "max_businesses": 25,
+  "minimum_website_issues": 2,
+  "cities": [
+    "Catanduva/SP",
+    "Pindorama/SP",
+    "Catigua/SP",
+    "Tabapua/SP",
+    "Sao Jose do Rio Preto/SP",
+    "Mirassol/SP",
+    "Novo Horizonte/SP",
+    "Bebedouro/SP",
+    "Ibira/SP",
+    "Olimpia/SP"
+  ],
+  "scoring": {
+    "business_quality": 40,
+    "website_opportunity": 40,
+    "contactability": 20
+  },
+  "discovery_provider": "fake",
+  "browser_provider": "openclaw-playwright"
+}

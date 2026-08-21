@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from business_prospector.application.ports import SearchQuery
@@ -8,7 +9,7 @@ from business_prospector.domain.models import BusinessCandidate, WebsiteAssessme
 
 
 class FakeBusinessDiscoveryProvider:
-    def __init__(self, fixture_path: Path) -> None:
+    def __init__(self, fixture_path: Path | Traversable) -> None:
         raw = json.loads(fixture_path.read_text(encoding="utf-8"))
         self._candidates = [BusinessCandidate(**item["business"]) for item in raw]
 
@@ -23,7 +24,7 @@ class FakeBusinessDiscoveryProvider:
 
 
 class FakeWebsiteAssessmentProvider:
-    def __init__(self, fixture_path: Path) -> None:
+    def __init__(self, fixture_path: Path | Traversable) -> None:
         raw = json.loads(fixture_path.read_text(encoding="utf-8"))
         self._assessments = {
             item["business"]["name"]: WebsiteAssessment(**item["assessment"]) for item in raw
@@ -31,4 +32,3 @@ class FakeWebsiteAssessmentProvider:
 
     def assess(self, candidate: BusinessCandidate) -> WebsiteAssessment:
         return self._assessments[candidate.name]
-

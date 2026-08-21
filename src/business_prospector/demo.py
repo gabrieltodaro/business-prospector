@@ -10,6 +10,7 @@ from business_prospector.application.config import ProspectingConfig
 from business_prospector.application.prospecting import ProspectingService
 from business_prospector.infrastructure.fake_providers import FakeBusinessDiscoveryProvider, FakeWebsiteAssessmentProvider
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
+from business_prospector.package_resources import default_config_resource, fake_dentists_resource
 
 
 def main() -> int:
@@ -19,14 +20,13 @@ def main() -> int:
     parser.add_argument("--database", type=Path)
     args = parser.parse_args()
 
-    root = Path(__file__).resolve().parents[2]
-    fixture = root / "tests" / "fixtures" / "dentists.json"
+    fixture = fake_dentists_resource()
     database = args.database or Path(tempfile.mkdtemp(prefix="business-prospector-")) / "prospector.db"
     service = ProspectingService(
         FakeBusinessDiscoveryProvider(fixture),
         FakeWebsiteAssessmentProvider(fixture),
         SQLiteLeadRepository(database),
-        ProspectingConfig.from_path(root / "config" / "default.json"),
+        ProspectingConfig.from_resource(default_config_resource()),
     )
     json.dump(service.prospect(args.niche, args.city).to_dict(), sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
@@ -35,4 +35,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

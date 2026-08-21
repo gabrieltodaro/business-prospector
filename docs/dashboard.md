@@ -14,6 +14,8 @@ O dashboard reutiliza `Lead`, a validacao de status e `SQLiteLeadRepository`. Na
 
 O banco padrao e `~/.openclaw/data/business-prospector/business-prospector.db`, o mesmo fallback persistente usado pelo bundle Claude/OpenClaw 2026.7.1. Um caminho explicito pode ser passado com `--database`.
 
+O config default e os fixtures fake do demo sao recursos read-only instalados dentro do pacote e resolvidos com `importlib.resources`. No MCP, `BUSINESS_PROSPECTOR_CONFIG` continua tendo precedencia e aponta para o config do bundle quando fornecido pelo OpenClaw. Nenhum recurso empacotado e usado para dados gravaveis.
+
 ## Executar
 
 Ambiente de desenvolvimento, com dados fake e banco temporario:

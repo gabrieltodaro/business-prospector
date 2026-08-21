@@ -16,7 +16,12 @@ test = ["pytest>=8,<10"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-business_prospector = ["dashboard_static/*.html", "dashboard_static/*.css", "dashboard_static/*.js"]
+business_prospector = [
+    "dashboard_static/*.html",
+    "dashboard_static/*.css",
+    "dashboard_static/*.js",
+    "resources/*.json",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"

@@ -5,6 +5,7 @@ import os
 import sqlite3
 from pathlib import Path
 from typing import Any
+from importlib.resources.abc import Traversable
 
 from mcp.server.fastmcp import FastMCP
 
@@ -21,13 +22,10 @@ from business_prospector.infrastructure.fake_providers import (
 )
 from business_prospector.infrastructure.google_places import GooglePlacesBusinessDiscoveryProvider
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
+from business_prospector.package_resources import default_config_resource, fake_dentists_resource
 
 LOGGER = logging.getLogger("business_prospector.mcp")
 mcp = FastMCP("business-prospector")
-
-
-def _root() -> Path:
-    return Path(__file__).resolve().parents[3]
 
 
 def _data_dir() -> Path:
@@ -37,9 +35,9 @@ def _data_dir() -> Path:
     return (Path.home() / ".openclaw" / "data" / "business-prospector").resolve()
 
 
-def _config_path() -> Path:
+def _config_resource() -> Traversable:
     configured = os.environ.get("BUSINESS_PROSPECTOR_CONFIG")
-    return Path(configured).expanduser().resolve() if configured else _root() / "config" / "default.json"
+    return Path(configured).expanduser().resolve() if configured else default_config_resource()
 
 
 def _repository() -> SQLiteLeadRepository:
@@ -140,7 +138,7 @@ def save_lead(
         duplicate = repository.find_duplicate(lead)
         if duplicate:
             return _response("save_lead", error=f"duplicate lead {duplicate.lead_id} ({duplicate.match_type})")
-        config = ProspectingConfig.from_path(_config_path())
+        config = ProspectingConfig.from_resource(_config_resource())
         if assessment.issue_count < config.minimum_website_issues:
             return _response("save_lead", error="website does not meet the configured issue threshold")
         lead.score = calculate_score(lead, config.scoring).total
@@ -175,7 +173,7 @@ def update_lead(
         changes = {key: value for key, value in locals().items() if key != "lead_id" and value is not None}
         repository = _repository()
         lead = repository.update(lead_id, changes)
-        lead.score = calculate_score(lead, ProspectingConfig.from_path(_config_path()).scoring).total
+        lead.score = calculate_score(lead, ProspectingConfig.from_resource(_config_resource()).scoring).total
         lead = repository.update(lead_id, {"score": lead.score})
         return _response("update_lead", lead.to_dict())
     except (ProspectorError, ValueError, OSError, sqlite3.Error) as exc:
@@ -187,12 +185,12 @@ def update_lead(
 def prospect_fake(niche: str, city: str) -> dict[str, Any]:
     """Run the deterministic offline fixture pipeline; never calls Google or the network."""
     try:
-        fixture = _root() / "tests" / "fixtures" / "dentists.json"
+        fixture = fake_dentists_resource()
         service = ProspectingService(
             FakeBusinessDiscoveryProvider(fixture),
             FakeWebsiteAssessmentProvider(fixture),
             _repository(),
-            ProspectingConfig.from_path(_config_path()),
+            ProspectingConfig.from_resource(_config_resource()),
         )
         return _response("prospect_fake", service.prospect(niche, city).to_dict())
     except (ProspectorError, ValueError, OSError, KeyError, sqlite3.Error) as exc:

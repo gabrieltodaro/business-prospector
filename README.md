@@ -69,6 +69,8 @@ Banco operacional padrao:
 
 Abra `http://127.0.0.1:8765`. O servidor fica restrito ao localhost por padrao; detalhes de arquitetura, seguranca e operacao estao em [Dashboard Kanban](docs/dashboard.md).
 
+O config default e os fixtures do demo viajam como recursos read-only do pacote, portanto `--demo` funciona no runtime instalado e independe do checkout ou do diretorio atual. Quando o MCP recebe `BUSINESS_PROSPECTOR_CONFIG`, o arquivo externo do bundle continua tendo precedencia.
+
 ## OpenClaw
 
 O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Skills como filhos imediatos de `skills/`. O OpenClaw 2026.7.1 foi publicado antes do suporte a esse formato e nao examina o `plugin.json` da raiz. Para ele, `.mcp.json` oferece uma camada de compatibilidade Claude com os mesmos servidores MCP. Em uma versao que suporte Agent Plugins, a precedencia do detector escolhe `plugin.json` antes desse fallback.

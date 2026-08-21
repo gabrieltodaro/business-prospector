@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from business_prospector.domain.scoring import ScoreWeights
@@ -33,7 +34,11 @@ class ProspectingConfig:
 
     @classmethod
     def from_path(cls, path: Path) -> "ProspectingConfig":
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        return cls.from_resource(path)
+
+    @classmethod
+    def from_resource(cls, resource: Traversable) -> "ProspectingConfig":
+        raw = json.loads(resource.read_text(encoding="utf-8"))
         scoring = ScoreWeights(**raw.pop("scoring", {}))
         raw["cities"] = tuple(raw.get("cities", ()))
         return cls(scoring=scoring, **raw)
