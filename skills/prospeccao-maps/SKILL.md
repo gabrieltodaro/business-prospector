@@ -20,7 +20,7 @@ Para pedidos como "Prospecte 10 dentistas em Catanduva":
 7. Produza um `WebsiteAssessmentReport` com facts e inference separados para mobile, CTA, content, social_proof, layout, platform e broken_elements. Chame `validate_website_assessment` antes de continuar.
 8. Colete somente contatos comerciais publicos visiveis: `wa.me`/`api.whatsapp.com`, `mailto:`, Instagram e telefone. Link WhatsApp no website permite `whatsapp_confirmed=true` e `whatsapp_source=website_link`. Telefone do Places fica apenas em `phone`, com WhatsApp nao confirmado.
 9. Chame `qualify_and_save_candidate` com candidato, report validado, contatos publicos e o mesmo `batch_id`. Nunca forneca score: Python revalida, rechecando duplicata, threshold, score e persistencia.
-10. Falha individual (`assessment_failed`, `assessment_insufficient`, `not_qualified_website`, `duplicate`, `invalid`) entra no resumo e nao interrompe os demais candidatos. Interrompa o batch apenas se Places, Playwright ou business-prospector estiver indisponivel de forma sistemica, ou houver falha de configuracao/seguranca.
+10. Falha individual (`assessment_failed`, `assessment_insufficient`, `not_qualified_website`, `duplicate`, `identity_conflict`, `invalid`) entra no resumo e nao interrompe os demais candidatos. `persistence_conflicts` da preparacao nao seguem para Playwright; relate o conflito sem tratar slug como identidade ou fazer merge. Interrompa o batch apenas se Places, Playwright ou business-prospector estiver indisponivel de forma sistemica, ou houver falha de configuracao/seguranca.
 11. Ao final, use `list_leads` e apresente os leads deste batch por score decrescente, mais os deferred separadamente.
 
 ## Fluxo Primeiro Site

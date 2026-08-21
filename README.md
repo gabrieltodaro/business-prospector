@@ -112,6 +112,8 @@ No formato Agent Plugins, o OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}`
 
 Google Place ID tem precedencia sobre identificadores derivados. Dois registros com Place IDs nao vazios e diferentes representam Places distintos e nunca sao unidos por dominio, telefone, endereco ou nome+cidade. Esses fallbacks sao usados somente quando pelo menos um registro nao possui Place ID. Dominios compartilhados de redes sociais e perfis de terceiros nao sao identificadores de empresa. A selecao de benchmarks separa correspondencia com o alvo, duplicata dentro do pool e duplicata ja persistida.
 
+`slug` e um identificador tecnico unico, nao business identity. Quando entidades distintas pela regra acima geram o mesmo slug, o pipeline retorna `identity_conflict`/`persistence_conflicts` com o lead existente e nao insere, atualiza ou mescla registros. A constraint SQLite permanece como ultima barreira contra corridas de persistencia.
+
 Documentacao oficial usada para o bundle:
 
 - [OpenClaw plugin bundles](https://docs.openclaw.ai/plugins/bundles)

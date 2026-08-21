@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from business_prospector.application.ports import DuplicateMatch
+from business_prospector.application.ports import DuplicateMatch, PersistenceConflict
 from business_prospector.domain.exceptions import LeadNotFoundError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
 from business_prospector.domain.identity import identity_domain
@@ -234,6 +234,13 @@ class SQLiteLeadRepository:
             if row:
                 return DuplicateMatch(int(row["id"]), "normalized_name_city", "possible")
         return None
+
+    def find_slug_conflict(self, slug: str) -> PersistenceConflict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM leads WHERE slug = ? LIMIT 1", (slug,)
+            ).fetchone()
+        return PersistenceConflict(int(row["id"]), "slug", slug) if row else None
 
     @staticmethod
     def _lead_values(lead: Lead) -> dict[str, Any]:

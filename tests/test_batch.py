@@ -159,7 +159,51 @@ def test_qualification_outcomes_are_explicit(tmp_path: Path) -> None:
 def test_duplicate_recheck_makes_save_idempotent(tmp_path: Path) -> None:
     batch, _ = service(tmp_path)
     assert batch.qualify_and_save(candidate(), report(), "batch").outcome == "saved_qualified"
-    assert batch.qualify_and_save(candidate(), report(), "batch").outcome == "duplicate"
+    duplicate = batch.qualify_and_save(candidate(), report(), "batch-other")
+    assert duplicate.outcome == "duplicate"
+    assert duplicate.to_dict()["match"] == {
+        "rule": "external_place_id", "strength": "exact", "matched_against": "existing_lead",
+    }
+
+
+def test_distinct_place_ids_with_same_slug_return_structured_conflict(tmp_path: Path) -> None:
+    batch, repository = service(tmp_path)
+    first = batch.qualify_and_save(candidate(external_place_id="place-A"), report(), "batch-A")
+    assert first.outcome == "saved_qualified"
+    second = batch.qualify_and_save(
+        candidate(external_place_id="place-B", website_url="https://different.example"),
+        {**report(), "website_url": "https://different.example"},
+        "batch-B",
+    )
+    assert second.outcome == "identity_conflict"
+    assert second.reason == "slug conflicts with a distinct existing lead"
+    assert second.to_dict()["conflict"] == {
+        "type": "technical_identifier_conflict",
+        "field": "slug",
+        "value": "clinica-real-catanduva",
+        "existing_lead_id": first.lead.id,  # type: ignore[union-attr]
+    }
+    assert len(repository.list()) == 1
+    assert repository.list()[0].external_place_id == "place-A"
+
+
+def test_prepare_stops_distinct_identity_slug_conflict_before_assessment(tmp_path: Path) -> None:
+    batch, repository = service(tmp_path)
+    original = existing_lead(candidate(external_place_id="place-A"))
+    original = repository.save(original)
+    prepared = batch.prepare([
+        candidate(external_place_id="place-B", website_url="https://different.example")
+    ])
+    assert prepared.website_candidates == []
+    assert prepared.duplicates == []
+    assert len(prepared.persistence_conflicts) == 1
+    item = prepared.persistence_conflicts[0]
+    assert item["candidate"]["external_place_id"] == "place-B"
+    assert item["conflict"] == {
+        "type": "technical_identifier_conflict", "field": "slug",
+        "value": "clinica-real-catanduva", "existing_lead_id": original.id,
+    }
+    assert item["reason"] == "slug conflicts with a distinct existing lead"
 
 
 def test_public_contacts_affect_score_without_confirming_inferred_whatsapp(tmp_path: Path) -> None:

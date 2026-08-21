@@ -18,7 +18,7 @@ from business_prospector.domain.website_presence import WebsitePresence, classif
 
 from .batch import BatchProspectingService
 from .config import ProspectingConfig
-from .ports import DuplicateMatch, LeadRepository
+from .ports import DuplicateMatch, LeadRepository, PersistenceConflict
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +26,7 @@ class FirstWebsiteOutcome:
     outcome: str
     lead: Lead | None = None
     duplicate: DuplicateMatch | None = None
+    conflict: PersistenceConflict | None = None
     reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +38,8 @@ class FirstWebsiteOutcome:
                 "match_type": self.duplicate.match_type,
                 "confidence": self.duplicate.confidence,
             },
+            "match": self.duplicate.diagnostic() if self.duplicate else None,
+            "conflict": self.conflict.to_dict() if self.conflict else None,
             "reason": self.reason,
         }
 
@@ -258,10 +261,22 @@ class FirstWebsiteProspectingService:
             first_website_reason=presence.value, market_research=report.to_dict(),
             market_research_status=report.status, market_research_checked_at=utc_now(),
         )
+        conflict = self._repository.find_slug_conflict(lead.slug or "")
+        if conflict:
+            return FirstWebsiteOutcome(
+                "identity_conflict", conflict=conflict,
+                reason="slug conflicts with a distinct existing lead",
+            )
         try:
             return FirstWebsiteOutcome("saved_qualified_first_website", lead=self._repository.save(lead))
         except ValueError:
             duplicate = self._repository.find_duplicate(candidate)
             if duplicate:
                 return FirstWebsiteOutcome("duplicate", duplicate=duplicate)
+            conflict = self._repository.find_slug_conflict(lead.slug or "")
+            if conflict:
+                return FirstWebsiteOutcome(
+                    "identity_conflict", conflict=conflict,
+                    reason="slug conflicts with a distinct existing lead",
+                )
             raise

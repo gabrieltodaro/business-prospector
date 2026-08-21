@@ -91,6 +91,49 @@ def test_repository_fallback_matches_record_without_stable_place_id(
     assert match.match_type == "normalized_domain"
 
 
+def test_fallback_identity_works_in_both_missing_place_id_directions(
+    repository: SQLiteLeadRepository,
+) -> None:
+    existing_without_id = repository.save(lead("Without ID", "https://without-id.example"))
+    candidate_with_id = BusinessCandidate(
+        "Other", "dentista", "Other", 5, 1,
+        website_url="https://without-id.example/path", external_place_id="place-new",
+    )
+    match = repository.find_duplicate(candidate_with_id)
+    assert match is not None and match.lead_id == existing_without_id.id
+
+    existing_with_id = lead("With ID", "https://with-id.example")
+    existing_with_id.external_place_id = "place-existing"
+    existing_with_id = repository.save(existing_with_id)
+    candidate_without_id = BusinessCandidate(
+        "Other Two", "dentista", "Other", 5, 1,
+        website_url="https://with-id.example/path",
+    )
+    match = repository.find_duplicate(candidate_without_id)
+    assert match is not None and match.lead_id == existing_with_id.id
+
+
+def test_slug_conflict_is_technical_and_does_not_change_business_identity(
+    repository: SQLiteLeadRepository,
+) -> None:
+    original = lead("Same Name")
+    original.external_place_id = "place-A"
+    original = repository.save(original)
+    candidate = BusinessCandidate(
+        "Same Name", "dentista", "Catanduva", 5, 100,
+        website_url="https://different.example", external_place_id="place-B",
+    )
+    assert repository.find_duplicate(candidate) is None
+    conflict = repository.find_slug_conflict(original.slug or "")
+    assert conflict is not None
+    assert conflict.to_dict() == {
+        "type": "technical_identifier_conflict",
+        "field": "slug",
+        "value": original.slug,
+        "existing_lead_id": original.id,
+    }
+
+
 def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
     database = tmp_path / "migration.db"
     repository = SQLiteLeadRepository(database)

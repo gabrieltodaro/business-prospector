@@ -6,12 +6,13 @@ from uuid import uuid4
 
 from business_prospector.domain.exceptions import ProspectorError, ValidationError
 from business_prospector.domain.models import BusinessCandidate, Lead, utc_now
+from business_prospector.domain.normalization import slugify
 from business_prospector.domain.scoring import calculate_score
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.domain.website_presence import WebsitePresence, classify_website_presence
 
 from .config import ProspectingConfig
-from .ports import DuplicateMatch, LeadRepository
+from .ports import DuplicateMatch, LeadRepository, PersistenceConflict
 from .prospecting import ProspectingService
 
 
@@ -35,6 +36,7 @@ class BatchPreparation:
     deferred_first_website: list[DeferredFirstWebsite] = field(default_factory=list)
     rejected_reputation: list[BusinessCandidate] = field(default_factory=list)
     duplicates: list[dict[str, Any]] = field(default_factory=list)
+    persistence_conflicts: list[dict[str, Any]] = field(default_factory=list)
     invalid: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +46,7 @@ class BatchPreparation:
             "deferred_first_website": [item.to_dict() for item in self.deferred_first_website],
             "rejected_reputation": [item.to_dict() for item in self.rejected_reputation],
             "duplicates": self.duplicates,
+            "persistence_conflicts": self.persistence_conflicts,
             "invalid": self.invalid,
         }
         return {
@@ -61,6 +64,7 @@ class QualificationOutcome:
     outcome: str
     lead: Lead | None = None
     duplicate: DuplicateMatch | None = None
+    conflict: PersistenceConflict | None = None
     reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +76,8 @@ class QualificationOutcome:
                 "match_type": self.duplicate.match_type,
                 "confidence": self.duplicate.confidence,
             },
+            "match": self.duplicate.diagnostic() if self.duplicate else None,
+            "conflict": self.conflict.to_dict() if self.conflict else None,
             "reason": self.reason,
         }
 
@@ -123,6 +129,15 @@ class BatchProspectingService:
                     "lead_id": duplicate.lead_id,
                     "match_type": duplicate.match_type,
                     "confidence": duplicate.confidence,
+                    "match": duplicate.diagnostic(),
+                })
+                continue
+            conflict = self._repository.find_slug_conflict(slugify(f"{candidate.name}-{candidate.city}"))
+            if conflict:
+                result.persistence_conflicts.append({
+                    "candidate": candidate.to_dict(),
+                    "conflict": conflict.to_dict(),
+                    "reason": "slug conflicts with a distinct existing lead",
                 })
                 continue
             presence = classify_website_presence(candidate.website_url)
@@ -201,12 +216,24 @@ class BatchProspectingService:
         lead.website_assessment = report.to_dict()
         lead.assessment_status = report.status
         lead.assessment_checked_at = utc_now()
+        conflict = self._repository.find_slug_conflict(lead.slug or "")
+        if conflict:
+            return QualificationOutcome(
+                "identity_conflict", conflict=conflict,
+                reason="slug conflicts with a distinct existing lead",
+            )
         try:
             saved = self._repository.save(lead)
         except ValueError:
             duplicate = self._repository.find_duplicate(candidate)
             if duplicate:
                 return QualificationOutcome("duplicate", duplicate=duplicate)
+            conflict = self._repository.find_slug_conflict(lead.slug or "")
+            if conflict:
+                return QualificationOutcome(
+                    "identity_conflict", conflict=conflict,
+                    reason="slug conflicts with a distinct existing lead",
+                )
             raise
         return QualificationOutcome("saved_qualified", lead=saved)
 

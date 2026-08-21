@@ -9,7 +9,7 @@ from business_prospector.application.config import ProspectingConfig
 from business_prospector.application.first_website import FirstWebsiteProspectingService
 from business_prospector.domain.exceptions import ValidationError
 from business_prospector.domain.first_website import FirstWebsiteMarketReport, is_first_website_candidate
-from business_prospector.domain.models import BusinessCandidate
+from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
 from business_prospector.domain.scoring import calculate_first_website_score
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
 
@@ -266,6 +266,46 @@ def test_qualify_save_persists_type_research_batch_and_is_idempotent(tmp_path: P
     assert stored.market_research["benchmark_market"] == "São Paulo, SP"  # type: ignore[index]
     assert len(stored.market_research["benchmarks"]) == 2  # type: ignore[arg-type,index]
     assert prospecting.qualify_and_save(candidate(), research(), "batch-first").outcome == "duplicate"
+
+
+def test_laura_place_id_change_returns_slug_conflict_without_mutation(tmp_path: Path) -> None:
+    prospecting, repository = service(tmp_path)
+    name = (
+        "Dra. Laura Baesso Dentista em Catanduva - Clareamento Dental, "
+        "Estética e Harmonização Facial"
+    )
+    old = Lead(
+        name=name, category="dentist", city="Catanduva/SP", rating=4.9, review_count=200,
+        website_url="", external_place_id="ChIJ1aw4jgEfvJQRwE_Iw9pSqGg",
+        assessment=WebsiteAssessment(reason="legacy first website lead"), batch_id="batch-old",
+    )
+    old = repository.save(old)
+    raw = candidate(
+        name=name, category="dentist", city="Catanduva/SP", website_url=None,
+        external_place_id="ChIJ1aw4jgEfvJQRe9n-75bAEHo",
+    )
+
+    assert repository.find_duplicate(BusinessCandidate(**raw)) is None
+    market_research = research()
+    for benchmark in market_research["benchmarks"]:  # type: ignore[union-attr]
+        benchmark["category"] = "dentist"
+    outcome = prospecting.qualify_and_save(raw, market_research, "batch-new")
+
+    assert outcome.outcome == "identity_conflict"
+    assert outcome.to_dict()["conflict"] == {
+        "type": "technical_identifier_conflict",
+        "field": "slug",
+        "value": (
+            "dra-laura-baesso-dentista-em-catanduva-clareamento-dental-estetica-e-"
+            "harmonizacao-facial-catanduva-sp"
+        ),
+        "existing_lead_id": old.id,
+    }
+    assert len(repository.list()) == 1
+    unchanged = repository.get(old.id or 0)
+    assert unchanged is not None
+    assert unchanged.external_place_id == "ChIJ1aw4jgEfvJQRwE_Iw9pSqGg"
+    assert unchanged.batch_id == "batch-old"
 
 
 def test_qualification_returns_insufficient_and_not_qualified_outcomes(tmp_path: Path) -> None:
