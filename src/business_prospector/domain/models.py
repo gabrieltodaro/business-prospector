@@ -16,7 +16,18 @@ ISSUE_FIELDS = (
     "social_proof",
     "platform",
 )
-VALID_STATUSES = {"qualified", "rejected", "needs_review"}
+PIPELINE_STATUSES = (
+    "new",
+    "qualified",
+    "needs_review",
+    "contacted",
+    "proposal",
+    "closed",
+    "discarded",
+)
+# `rejected` is retained for existing records; new dashboard movement uses
+# `discarded`, which describes a commercial pipeline decision more accurately.
+VALID_STATUSES = set(PIPELINE_STATUSES) | {"rejected"}
 VALID_WHATSAPP_SOURCES = {"website_link", "google_business_phone", "manual", "unknown"}
 
 

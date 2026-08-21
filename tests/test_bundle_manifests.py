@@ -46,9 +46,21 @@ def test_openclaw_2026_7_1_claude_fallback_loads_same_server() -> None:
     assert "GOOGLE_MAPS_API_KEY" not in server["env"]
 
 
-def test_launcher_uses_explicit_python_without_developer_venv() -> None:
+def test_launcher_uses_explicit_python_without_developer_venv(tmp_path: Path) -> None:
+    invocation = tmp_path / "python-invocation.txt"
+    fake_python = tmp_path / "controlled-python"
+    fake_python.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "printf '%s\\n' \"$@\" > \"$FAKE_PYTHON_INVOCATION\"\n"
+        "printf '%s\\n' 'business-prospector MCP runtime: ok'\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
     env = dict(os.environ)
-    env["BUSINESS_PROSPECTOR_PYTHON"] = os.sys.executable
+    env["BUSINESS_PROSPECTOR_PYTHON"] = str(fake_python)
+    env["FAKE_PYTHON_INVOCATION"] = str(invocation)
     result = subprocess.run(
         [str(ROOT / "bin" / "business-prospector-mcp"), "--check"],
         cwd=ROOT,
@@ -58,6 +70,9 @@ def test_launcher_uses_explicit_python_without_developer_venv() -> None:
         text=True,
     )
     assert "runtime: ok" in result.stdout
+    arguments = invocation.read_text(encoding="utf-8").splitlines()
+    assert arguments[0] == "-c"
+    assert "import mcp, business_prospector" in arguments[1]
 
 
 def test_launcher_recovers_only_google_key_from_openclaw_service_env(tmp_path: Path) -> None:

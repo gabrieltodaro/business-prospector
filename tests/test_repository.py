@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -49,3 +50,20 @@ def test_layered_deduplication(
     assert match is not None
     assert (match.match_type, match.confidence) == (match_type, confidence)
 
+
+def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
+    database = tmp_path / "migration.db"
+    repository = SQLiteLeadRepository(database)
+    original = repository.save(lead())
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA user_version = 1")
+
+    migrated = SQLiteLeadRepository(database)
+    updated = migrated.update(original.id or 0, {"status": "proposal"})
+
+    assert updated.name == original.name
+    assert updated.status == "proposal"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        indexes = {row[1] for row in connection.execute("PRAGMA index_list(leads)")}
+    assert "ix_leads_name_city" in indexes

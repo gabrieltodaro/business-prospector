@@ -51,6 +51,24 @@ Pipeline simulado, sem rede:
 
 Por padrao o demo cria o banco em um diretorio temporario. Use `--database /caminho/seguro/prospector.db` apenas quando quiser preservar o resultado.
 
+## Dashboard local
+
+O Kanban operacional le e atualiza o mesmo SQLite do MCP. Ele e read-only exceto pela mudanca validada de status entre `new`, `qualified`, `needs_review`, `contacted`, `proposal`, `closed` e `discarded`.
+
+Demo isolado com fixtures fake e banco temporario:
+
+```bash
+.venv/bin/python -m business_prospector.dashboard --demo
+```
+
+Banco operacional padrao:
+
+```bash
+.venv/bin/python -m business_prospector.dashboard
+```
+
+Abra `http://127.0.0.1:8765`. O servidor fica restrito ao localhost por padrao; detalhes de arquitetura, seguranca e operacao estao em [Dashboard Kanban](docs/dashboard.md).
+
 ## OpenClaw
 
 O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Skills como filhos imediatos de `skills/`. O OpenClaw 2026.7.1 foi publicado antes do suporte a esse formato e nao examina o `plugin.json` da raiz. Para ele, `.mcp.json` oferece uma camada de compatibilidade Claude com os mesmos servidores MCP. Em uma versao que suporte Agent Plugins, a precedencia do detector escolhe `plugin.json` antes desse fallback.
@@ -115,7 +133,7 @@ Pesos e filtros estao centralizados em `config/default.json` e serao calibrados 
 
 ## Fora do MVP ativo
 
-Dashboard, redesign/criacao de website, envio de WhatsApp ou e-mail, propostas, contratos, financeiro, follow-ups, deploy, HostGator, Locaweb, Google Sheets e `leads.md`.
+Redesign/criacao de website, envio de WhatsApp ou e-mail, propostas, contratos, financeiro, follow-ups, deploy, HostGator, Locaweb, Google Sheets e `leads.md`.
 
 ## Google Places
 

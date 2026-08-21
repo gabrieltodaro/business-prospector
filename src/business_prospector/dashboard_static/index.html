@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Business Prospector — Pipeline</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">✳</span><div><strong>Business Prospector</strong><span>Pipeline comercial · SQLite ao vivo</span></div></div>
+    <div class="summary" aria-live="polite">
+      <span><b id="lead-count">—</b> leads</span>
+      <span><b id="avg-score">—</b> score médio</span>
+      <span><b id="contact-count">—</b> com contato</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="controls" aria-label="Filtros do pipeline">
+      <div><label for="search">Buscar</label><input id="search" type="search" placeholder="Empresa, cidade ou nicho"></div>
+      <div><label for="city-filter">Cidade</label><select id="city-filter"><option value="">Todas</option></select></div>
+      <div><label for="category-filter">Nicho</label><select id="category-filter"><option value="">Todos</option></select></div>
+      <div><label for="score-filter">Score mínimo</label><input id="score-filter" type="number" min="0" max="100" value="0"></div>
+      <button id="refresh" type="button">Atualizar</button>
+      <p id="freshness">Carregando dados…</p>
+    </section>
+
+    <section class="board-shell" aria-labelledby="board-title">
+      <div class="board-heading"><div><p class="eyebrow">Operação</p><h1 id="board-title">Pipeline de oportunidades</h1></div><p>Arraste um card para atualizar somente o status. Abra para ver todos os dados.</p></div>
+      <div id="board" class="board" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="inspector" class="inspector" aria-labelledby="detail-title" aria-hidden="true">
+    <div class="inspector-head"><div><p class="eyebrow">Lead selecionado</p><h2 id="detail-title">Detalhes</h2></div><button id="close-detail" type="button" aria-label="Fechar detalhes">×</button></div>
+    <div id="detail-content" class="detail-content"></div>
+  </aside>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

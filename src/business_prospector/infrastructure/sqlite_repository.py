@@ -9,7 +9,17 @@ from business_prospector.domain.exceptions import LeadNotFoundError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
 from business_prospector.domain.normalization import normalize_address, normalize_domain, normalize_phone, normalize_text
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+LEAD_COLUMNS = (
+    "id", "external_place_id", "slug", "name", "normalized_name", "category", "city",
+    "normalized_city", "address", "normalized_address", "maps_url", "rating", "review_count",
+    "website_url", "normalized_domain", "phone", "normalized_phone", "whatsapp",
+    "whatsapp_confirmed", "whatsapp_source", "email", "instagram", "website_issue_layout",
+    "website_issue_mobile", "website_issue_cta", "website_issue_content",
+    "website_issue_social_proof", "website_issue_platform", "website_issue_count",
+    "qualification_reason", "score", "status", "source", "discovered_at", "last_checked_at",
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS leads (
@@ -44,7 +54,7 @@ CREATE TABLE IF NOT EXISTS leads (
     website_issue_count INTEGER NOT NULL DEFAULT 0,
     qualification_reason TEXT NOT NULL DEFAULT '',
     score INTEGER NOT NULL DEFAULT 0 CHECK (score >= 0 AND score <= 100),
-    status TEXT NOT NULL DEFAULT 'qualified' CHECK (status IN ('qualified','rejected','needs_review')),
+    status TEXT NOT NULL DEFAULT 'qualified' CHECK (status IN ('new','qualified','needs_review','contacted','proposal','closed','discarded','rejected')),
     source TEXT NOT NULL,
     discovered_at TEXT NOT NULL,
     last_checked_at TEXT NOT NULL
@@ -76,7 +86,30 @@ class SQLiteLeadRepository:
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA)
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if version == 1:
+                self._migrate_statuses(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    @staticmethod
+    def _migrate_statuses(connection: sqlite3.Connection) -> None:
+        columns = ", ".join(LEAD_COLUMNS)
+        connection.execute("ALTER TABLE leads RENAME TO leads_status_v1")
+        connection.executescript(SCHEMA)
+        connection.execute(
+            f"INSERT INTO leads ({columns}) SELECT {columns} FROM leads_status_v1"  # noqa: S608
+        )
+        connection.execute("DROP TABLE leads_status_v1")
+        connection.executescript(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_leads_external_place_id
+                ON leads(external_place_id) WHERE external_place_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS ix_leads_domain ON leads(normalized_domain);
+            CREATE INDEX IF NOT EXISTS ix_leads_phone ON leads(normalized_phone);
+            CREATE INDEX IF NOT EXISTS ix_leads_name_city ON leads(normalized_name, normalized_city);
+            CREATE INDEX IF NOT EXISTS ix_leads_address ON leads(normalized_address);
+            """
+        )
 
     def save(self, lead: Lead) -> Lead:
         lead.validate()
