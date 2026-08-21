@@ -28,6 +28,9 @@
     "minimum_competitors": 2,
     "max_competitors": 3,
     "max_competitor_candidates": 10,
+    "compatible_category_groups": [
+      ["dentist", "dental_clinic"]
+    ],
     "scoring": {
       "business_quality": 40,
       "digital_presence_gap": 30,

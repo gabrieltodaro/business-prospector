@@ -16,6 +16,7 @@ class FirstWebsitePolicy:
     minimum_competitors: int = 2
     max_competitors: int = 3
     max_competitor_candidates: int = 10
+    compatible_category_groups: tuple[tuple[str, ...], ...] = (("dentist", "dental_clinic"),)
     scoring: FirstWebsiteScoreWeights = FirstWebsiteScoreWeights()
 
     def __post_init__(self) -> None:
@@ -27,6 +28,9 @@ class FirstWebsitePolicy:
             raise ValueError("first website competitor limits must be between 1 and 3")
         if not self.max_competitors <= self.max_competitor_candidates <= 25:
             raise ValueError("invalid first website competitor candidate limit")
+        if any(len(group) < 2 or any(not isinstance(item, str) or not item.strip() for item in group)
+               for group in self.compatible_category_groups):
+            raise ValueError("compatible category groups must contain at least two category names")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +68,10 @@ class ProspectingConfig:
         scoring = ScoreWeights(**raw.pop("scoring", {}))
         first_raw = raw.pop("first_website", {})
         first_scoring = FirstWebsiteScoreWeights(**first_raw.pop("scoring", {}))
+        if "compatible_category_groups" in first_raw:
+            first_raw["compatible_category_groups"] = tuple(
+                tuple(group) for group in first_raw["compatible_category_groups"]
+            )
         first_website = FirstWebsitePolicy(scoring=first_scoring, **first_raw)
         raw["cities"] = tuple(raw.get("cities", ()))
         return cls(scoring=scoring, first_website=first_website, **raw)

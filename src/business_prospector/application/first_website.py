@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +40,65 @@ class FirstWebsiteOutcome:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CompetitorRejection:
+    candidate: dict[str, Any]
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"candidate": self.candidate, "reason": self.reason}
+
+
+@dataclass(frozen=True, slots=True)
+class CompetitorSelection:
+    raw_count: int
+    selected: tuple[BusinessCandidate, ...]
+    rejected: tuple[CompetitorRejection, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        reasons = Counter(item.reason for item in self.rejected)
+        return {
+            "selected": [item.to_dict() for item in self.selected],
+            "rejected": [item.to_dict() for item in self.rejected],
+            "summary": {
+                "raw": self.raw_count,
+                "evaluated": len(self.selected) + len(self.rejected),
+                "selected": len(self.selected),
+                "rejected": len(self.rejected),
+                "reasons": dict(sorted(reasons.items())),
+            },
+        }
+
+
+def _categories_are_compatible(
+    left: str, right: str, groups: tuple[tuple[str, ...], ...],
+) -> bool:
+    normalized = {normalize_text(left), normalize_text(right)}
+    if len(normalized) == 1:
+        return True
+    return any(normalized <= {normalize_text(item) for item in group} for group in groups)
+
+
+def _candidate_identities(item: BusinessCandidate) -> set[str]:
+    identities = {f"name_city:{normalize_text(item.name)}:{normalize_text(item.city)}"}
+    if item.external_place_id:
+        identities.add(f"place:{item.external_place_id}")
+    domain = normalize_domain(item.website_url)
+    if domain:
+        identities.add(f"domain:{domain}")
+    return identities
+
+
+def _invalid_candidate_snapshot(raw: object, index: int) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {"candidate_index": index}
+    allowed = BusinessCandidate.__dataclass_fields__
+    return {
+        key: value for key, value in raw.items()
+        if key in allowed and (value is None or isinstance(value, (str, int, float, bool)))
+    }
+
+
 class FirstWebsiteProspectingService:
     def __init__(self, repository: LeadRepository, config: ProspectingConfig) -> None:
         self._repository = repository
@@ -46,35 +106,51 @@ class FirstWebsiteProspectingService:
 
     def select_competitors(
         self, raw_target: dict[str, Any], raw_candidates: list[dict[str, Any]], maximum: int = 2
-    ) -> list[BusinessCandidate]:
+    ) -> CompetitorSelection:
         target = BusinessCandidate(**raw_target)
         limit = min(maximum, self._config.first_website.max_competitors)
         if limit < 1:
             raise ValidationError("maximum competitors must be positive")
         selected: list[BusinessCandidate] = []
+        rejected: list[CompetitorRejection] = []
         seen: set[str] = set()
-        for raw in raw_candidates[: self._config.first_website.max_competitor_candidates]:
+        bounded = raw_candidates[: self._config.first_website.max_competitor_candidates]
+        for index, raw in enumerate(bounded):
             try:
                 item = BusinessCandidate(**raw)
             except (ProspectorError, TypeError, ValueError):
+                snapshot = _invalid_candidate_snapshot(raw, index)
+                website = raw.get("website_url") if isinstance(raw, dict) else None
+                reason = ("invalid_url" if isinstance(website, str) and
+                          classify_website_presence(website).presence is WebsitePresence.INVALID_URL
+                          else "invalid_candidate")
+                rejected.append(CompetitorRejection(snapshot, reason))
                 continue
-            if item.external_place_id and item.external_place_id == target.external_place_id:
+            identities = _candidate_identities(item)
+            if identities & _candidate_identities(target):
+                rejected.append(CompetitorRejection(item.to_dict(), "target_business"))
                 continue
-            if normalize_text(item.category) != normalize_text(target.category):
+            if identities & seen:
+                rejected.append(CompetitorRejection(item.to_dict(), "duplicate"))
+                continue
+            seen.update(identities)
+            if not _categories_are_compatible(
+                item.category, target.category, self._config.first_website.compatible_category_groups,
+            ):
+                rejected.append(CompetitorRejection(item.to_dict(), "category_mismatch"))
                 continue
             presence = classify_website_presence(item.website_url).presence
             if presence not in {WebsitePresence.OWN_WEBSITE, WebsitePresence.HOSTED_WEBSITE}:
+                rejected.append(CompetitorRejection(item.to_dict(), presence.value))
                 continue
             if item.rating < self._config.minimum_rating or item.review_count < self._config.minimum_reviews:
+                rejected.append(CompetitorRejection(item.to_dict(), "reputation_below_threshold"))
                 continue
-            identity = item.external_place_id or normalize_domain(item.website_url) or f"{item.name}:{item.city}"
-            if identity in seen:
-                continue
-            seen.add(identity)
-            selected.append(item)
             if len(selected) >= limit:
-                break
-        return selected
+                rejected.append(CompetitorRejection(item.to_dict(), "max_competitors_reached"))
+                continue
+            selected.append(item)
+        return CompetitorSelection(len(raw_candidates), tuple(selected), tuple(rejected))
 
     def qualify_and_save(
         self, raw_candidate: dict[str, Any], raw_research: dict[str, Any], batch_id: str,

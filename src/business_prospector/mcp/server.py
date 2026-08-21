@@ -298,10 +298,8 @@ def select_first_website_competitors(
         service = FirstWebsiteProspectingService(
             _repository(), ProspectingConfig.from_resource(_config_resource())
         )
-        selected = service.select_competitors(target, candidates, max_competitors)
-        return _response("select_first_website_competitors", {
-            "competitors": [item.to_dict() for item in selected], "count": len(selected),
-        })
+        selection = service.select_competitors(target, candidates, max_competitors)
+        return _response("select_first_website_competitors", selection.to_dict())
     except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         return _response("select_first_website_competitors", error=str(exc))
 

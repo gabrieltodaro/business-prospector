@@ -66,7 +66,7 @@ def test_first_website_eligibility_rejects_weak_reputation() -> None:
 
 def test_competitor_selection_is_relevant_unique_and_bounded(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
-    selected = prospecting.select_competitors(candidate(), [
+    selection = prospecting.select_competitors(candidate(), [
         candidate(name="Target copy", website_url="https://target.example", external_place_id="target-place"),
         candidate(name="A", website_url="https://a.example", external_place_id="a"),
         candidate(name="A duplicate", website_url="https://a.example", external_place_id="a"),
@@ -75,7 +75,70 @@ def test_competitor_selection_is_relevant_unique_and_bounded(tmp_path: Path) -> 
         candidate(name="Hosted", website_url="https://hosted.vercel.app", external_place_id="hosted"),
         candidate(name="Extra", website_url="https://extra.example", external_place_id="extra"),
     ], maximum=2)
-    assert [item.name for item in selected] == ["A", "Hosted"]
+    assert [item.name for item in selection.selected] == ["A", "Hosted"]
+    assert [item.reason for item in selection.rejected] == [
+        "target_business", "duplicate", "social_only", "category_mismatch",
+        "max_competitors_reached",
+    ]
+
+
+def test_competitor_selection_reports_every_rejection_and_summary(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    raw = [
+        candidate(name="Target", category="dentist", website_url="https://target.example", external_place_id="target-place"),
+        candidate(name="Selected", category="dental_clinic", website_url="https://selected.example", external_place_id="selected"),
+        candidate(name="Duplicate", category="dental_clinic", website_url="https://duplicate.example", external_place_id="selected"),
+        candidate(name="Wrong category", category="lawyer", website_url="https://law.example", external_place_id="law"),
+        candidate(name="Weak", category="dentist", website_url="https://weak.example", rating=4.6, external_place_id="weak"),
+        candidate(name="No website", category="dentist", website_url=None, external_place_id="none"),
+        candidate(name="Social", category="dentist", website_url="https://instagram.com/social", external_place_id="social"),
+        candidate(name="Profile", category="dentist", website_url="https://linktr.ee/profile", external_place_id="profile"),
+        candidate(name="Bad URL", category="dentist", website_url="ftp://invalid.example", external_place_id="bad-url"),
+        {"name": "Incomplete"},
+        candidate(name="Beyond maximum", website_url="https://extra.example", external_place_id="extra"),
+    ]
+    selection = prospecting.select_competitors(
+        candidate(category="dentist"), raw, maximum=1,
+    )
+
+    assert [item.name for item in selection.selected] == ["Selected"]
+    assert [item.reason for item in selection.rejected] == [
+        "target_business", "duplicate", "category_mismatch", "reputation_below_threshold",
+        "no_website", "social_only", "third_party_profile", "invalid_url", "invalid_candidate",
+    ]
+    payload = selection.to_dict()
+    assert payload["summary"] == {
+        "raw": 11, "evaluated": 10, "selected": 1, "rejected": 9,
+        "reasons": {
+            "category_mismatch": 1, "duplicate": 1, "invalid_candidate": 1, "invalid_url": 1,
+            "no_website": 1, "reputation_below_threshold": 1, "social_only": 1,
+            "target_business": 1, "third_party_profile": 1,
+        },
+    }
+    assert len(selection.selected) + len(selection.rejected) == payload["summary"]["evaluated"]
+
+
+def test_competitor_selection_accepts_owned_hosted_and_related_official_category(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    selection = prospecting.select_competitors(candidate(category="dentist"), [
+        candidate(name="Clinic", category="dental_clinic", website_url="https://clinic.example", external_place_id="clinic"),
+        candidate(name="Hosted", category="dentist", website_url="https://clinic.vercel.app", external_place_id="hosted"),
+    ])
+    assert [item.name for item in selection.selected] == ["Clinic", "Hosted"]
+    assert selection.rejected == ()
+
+
+def test_competitor_selection_reports_maximum_without_changing_input_order(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    selection = prospecting.select_competitors(candidate(), [
+        candidate(name="First", website_url="https://first.example", external_place_id="first"),
+        candidate(name="Second", website_url="https://second.example", external_place_id="second"),
+        candidate(name="Third", website_url="https://third.example", external_place_id="third"),
+    ], maximum=2)
+    assert [item.name for item in selection.selected] == ["First", "Second"]
+    assert [(item.candidate["name"], item.reason) for item in selection.rejected] == [
+        ("Third", "max_competitors_reached"),
+    ]
 
 
 def test_market_report_keeps_facts_inferences_and_recommendations_separate() -> None:
