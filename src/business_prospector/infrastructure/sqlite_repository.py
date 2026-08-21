@@ -246,7 +246,7 @@ class SQLiteLeadRepository:
             structured = report.to_dict()
         market_research = None
         if lead.market_research is not None:
-            research = FirstWebsiteMarketReport.from_dict(lead.market_research)
+            research = FirstWebsiteMarketReport.from_dict(lead.market_research, allow_legacy=True)
             if lead.market_research_status != research.status:
                 raise ValueError("market_research_status must match the structured report")
             market_research = research.to_dict()
@@ -321,7 +321,9 @@ class SQLiteLeadRepository:
         market_research: dict[str, Any] | None = None
         raw_market = row["market_research_json"]
         if raw_market:
-            market_research = FirstWebsiteMarketReport.from_dict(json.loads(raw_market)).to_dict()
+            market_research = FirstWebsiteMarketReport.from_dict(
+                json.loads(raw_market), allow_legacy=True,
+            ).to_dict()
         return Lead(
             id=row["id"], external_place_id=row["external_place_id"], slug=row["slug"], name=row["name"],
             category=row["category"], city=row["city"], address=row["address"], maps_url=row["maps_url"],

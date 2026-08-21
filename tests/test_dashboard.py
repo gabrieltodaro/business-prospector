@@ -174,3 +174,7 @@ def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     assert "Primeiro Site" in source
     assert "opportunity_type" in source
     assert "market_research" in source
+    assert "research.benchmark_market" in source
+    assert "research.benchmarks||research.competitors||[]" in source
+    assert "(benchmark.facts||[]).join" in source
+    assert "innerHTML" not in source

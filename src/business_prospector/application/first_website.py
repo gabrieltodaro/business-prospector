@@ -12,7 +12,7 @@ from business_prospector.domain.first_website import (
 )
 from business_prospector.domain.identity import IdentityMatch, match_business_identity
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
-from business_prospector.domain.normalization import normalize_text
+from business_prospector.domain.normalization import normalize_domain, normalize_text
 from business_prospector.domain.scoring import calculate_first_website_score
 from business_prospector.domain.website_presence import WebsitePresence, classify_website_presence
 
@@ -42,7 +42,7 @@ class FirstWebsiteOutcome:
 
 
 @dataclass(frozen=True, slots=True)
-class CompetitorRejection:
+class BenchmarkRejection:
     candidate: dict[str, Any]
     reason: str
     match: IdentityMatch | None = None
@@ -56,14 +56,19 @@ class CompetitorRejection:
 
 
 @dataclass(frozen=True, slots=True)
-class CompetitorSelection:
+class BenchmarkSelection:
     raw_count: int
+    country: str
+    benchmark_market: str
     selected: tuple[BusinessCandidate, ...]
-    rejected: tuple[CompetitorRejection, ...]
+    rejected: tuple[BenchmarkRejection, ...]
+    minimum_required: int
 
     def to_dict(self) -> dict[str, Any]:
         reasons = Counter(item.reason for item in self.rejected)
         return {
+            "country": self.country,
+            "benchmark_market": self.benchmark_market,
             "selected": [item.to_dict() for item in self.selected],
             "rejected": [item.to_dict() for item in self.rejected],
             "summary": {
@@ -71,6 +76,10 @@ class CompetitorSelection:
                 "evaluated": len(self.selected) + len(self.rejected),
                 "selected": len(self.selected),
                 "rejected": len(self.rejected),
+                "minimum_required": self.minimum_required,
+                "research_status": (
+                    "ready" if len(self.selected) >= self.minimum_required else "research_insufficient"
+                ),
                 "reasons": dict(sorted(reasons.items())),
             },
         }
@@ -100,17 +109,30 @@ class FirstWebsiteProspectingService:
         self._repository = repository
         self._config = config
 
-    def select_competitors(
-        self, raw_target: dict[str, Any], raw_candidates: list[dict[str, Any]], maximum: int = 2
-    ) -> CompetitorSelection:
+    @staticmethod
+    def _benchmark_rank(item: BusinessCandidate) -> tuple[float, int, str, str, str]:
+        return (
+            -item.rating,
+            -item.review_count,
+            normalize_text(item.name),
+            item.external_place_id or "",
+            normalize_domain(item.website_url) or "",
+        )
+
+    def select_benchmarks(
+        self, raw_target: dict[str, Any], raw_candidates: list[dict[str, Any]], maximum: int = 2,
+    ) -> BenchmarkSelection:
         target = BusinessCandidate(**raw_target)
-        limit = min(maximum, self._config.first_website.max_competitors)
+        policy = self._config.first_website
+        benchmark_policy = policy.benchmark_research
+        limit = min(maximum, benchmark_policy.max_benchmarks)
         if limit < 1:
-            raise ValidationError("maximum competitors must be positive")
+            raise ValidationError("maximum benchmarks must be positive")
         selected: list[BusinessCandidate] = []
-        rejected: list[CompetitorRejection] = []
+        rejected: list[BenchmarkRejection] = []
         seen: list[BusinessCandidate] = []
-        bounded = raw_candidates[: self._config.first_website.max_competitor_candidates]
+        parsed: list[BusinessCandidate] = []
+        bounded = raw_candidates[: benchmark_policy.max_candidates]
         for index, raw in enumerate(bounded):
             try:
                 item = BusinessCandidate(**raw)
@@ -120,13 +142,28 @@ class FirstWebsiteProspectingService:
                 reason = ("invalid_url" if isinstance(website, str) and
                           classify_website_presence(website).presence is WebsitePresence.INVALID_URL
                           else "invalid_candidate")
-                rejected.append(CompetitorRejection(snapshot, reason))
+                rejected.append(BenchmarkRejection(snapshot, reason))
                 continue
+            parsed.append(item)
+
+        for item in sorted(parsed, key=self._benchmark_rank):
             target_match = match_business_identity(item, target)
             if target_match:
-                rejected.append(CompetitorRejection(
+                rejected.append(BenchmarkRejection(
                     item.to_dict(), "target_business", target_match, "target",
                 ))
+                continue
+            if not _categories_are_compatible(
+                item.category, target.category, policy.compatible_category_groups,
+            ):
+                rejected.append(BenchmarkRejection(item.to_dict(), "category_mismatch"))
+                continue
+            presence = classify_website_presence(item.website_url).presence
+            if presence not in {WebsitePresence.OWN_WEBSITE, WebsitePresence.HOSTED_WEBSITE}:
+                rejected.append(BenchmarkRejection(item.to_dict(), presence.value))
+                continue
+            if item.rating < benchmark_policy.minimum_rating or item.review_count < benchmark_policy.minimum_reviews:
+                rejected.append(BenchmarkRejection(item.to_dict(), "reputation_below_threshold"))
                 continue
             pool_match = None
             for previous in seen:
@@ -134,28 +171,50 @@ class FirstWebsiteProspectingService:
                 if pool_match:
                     break
             if pool_match:
-                rejected.append(CompetitorRejection(
-                    item.to_dict(), "duplicate", pool_match, "competitor_pool",
+                rejected.append(BenchmarkRejection(
+                    item.to_dict(), "duplicate", pool_match, "benchmark_pool",
                 ))
                 continue
             seen.append(item)
-            if not _categories_are_compatible(
-                item.category, target.category, self._config.first_website.compatible_category_groups,
-            ):
-                rejected.append(CompetitorRejection(item.to_dict(), "category_mismatch"))
-                continue
-            presence = classify_website_presence(item.website_url).presence
-            if presence not in {WebsitePresence.OWN_WEBSITE, WebsitePresence.HOSTED_WEBSITE}:
-                rejected.append(CompetitorRejection(item.to_dict(), presence.value))
-                continue
-            if item.rating < self._config.minimum_rating or item.review_count < self._config.minimum_reviews:
-                rejected.append(CompetitorRejection(item.to_dict(), "reputation_below_threshold"))
-                continue
             if len(selected) >= limit:
-                rejected.append(CompetitorRejection(item.to_dict(), "max_competitors_reached"))
+                rejected.append(BenchmarkRejection(item.to_dict(), "max_benchmarks_reached"))
                 continue
             selected.append(item)
-        return CompetitorSelection(len(raw_candidates), tuple(selected), tuple(rejected))
+        return BenchmarkSelection(
+            len(raw_candidates), benchmark_policy.country, benchmark_policy.default_market,
+            tuple(selected), tuple(rejected), benchmark_policy.minimum_benchmarks,
+        )
+
+    def select_competitors(
+        self, raw_target: dict[str, Any], raw_candidates: list[dict[str, Any]], maximum: int = 2,
+    ) -> BenchmarkSelection:
+        """Deprecated compatibility alias; use select_benchmarks."""
+        return self.select_benchmarks(raw_target, raw_candidates, maximum)
+
+    def validate_benchmark_report(
+        self, target: BusinessCandidate, report: FirstWebsiteMarketReport,
+    ) -> str | None:
+        policy = self._config.first_website
+        benchmark_policy = policy.benchmark_research
+        if report.benchmark_market != benchmark_policy.default_market:
+            return "benchmark_market does not match configured market"
+        seen_place_ids: set[str] = set()
+        for benchmark in report.benchmarks:
+            if benchmark.rating is None or benchmark.rating < benchmark_policy.minimum_rating:
+                return "benchmark rating below configured threshold"
+            if benchmark.review_count is None or benchmark.review_count < benchmark_policy.minimum_reviews:
+                return "benchmark reviews below configured threshold"
+            if benchmark.category is None or not _categories_are_compatible(
+                benchmark.category, target.category, policy.compatible_category_groups,
+            ):
+                return "benchmark category is incompatible with target"
+            if benchmark.external_place_id:
+                if benchmark.external_place_id == target.external_place_id:
+                    return "target business cannot be used as benchmark"
+                if benchmark.external_place_id in seen_place_ids:
+                    return "duplicate benchmark external_place_id"
+                seen_place_ids.add(benchmark.external_place_id)
+        return None
 
     def qualify_and_save(
         self, raw_candidate: dict[str, Any], raw_research: dict[str, Any], batch_id: str,
@@ -169,6 +228,9 @@ class FirstWebsiteProspectingService:
         except (ProspectorError, TypeError, ValueError) as exc:
             return FirstWebsiteOutcome("invalid", reason=str(exc))
         policy = self._config.first_website
+        invalid_report = self.validate_benchmark_report(candidate, report)
+        if invalid_report:
+            return FirstWebsiteOutcome("invalid", reason=invalid_report)
         presence = classify_website_presence(candidate.website_url).presence
         if presence not in FIRST_WEBSITE_PRESENCES:
             return FirstWebsiteOutcome("invalid", reason="candidate is not a first website opportunity")
@@ -179,8 +241,8 @@ class FirstWebsiteProspectingService:
             return FirstWebsiteOutcome("duplicate", duplicate=duplicate)
         if report.status == "failed":
             return FirstWebsiteOutcome("research_failed", reason=report.failure_reason)
-        if report.status != "complete" or len(report.competitors) < policy.minimum_competitors:
-            return FirstWebsiteOutcome("research_insufficient", reason=report.failure_reason or "insufficient competitors")
+        if report.status != "complete" or len(report.benchmarks) < policy.benchmark_research.minimum_benchmarks:
+            return FirstWebsiteOutcome("research_insufficient", reason=report.failure_reason or "insufficient benchmarks")
         score = calculate_first_website_score(candidate, report, policy.scoring)
         if score.total < policy.minimum_score:
             return FirstWebsiteOutcome("not_qualified_first_website", reason=f"score below threshold: {score.total}")

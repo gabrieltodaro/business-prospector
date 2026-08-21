@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -146,3 +147,34 @@ def test_schema_v3_defaults_existing_leads_to_redesign(tmp_path: Path) -> None:
     assert migrated is not None
     assert migrated.opportunity_type == "redesign"
     assert migrated.market_research is None
+
+
+def test_legacy_competitor_research_rows_load_as_benchmarks_without_migration(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "legacy-research.db"
+    repository = SQLiteLeadRepository(database)
+    stored = repository.save(lead("Legacy first website"))
+    legacy = {
+        "status": "complete",
+        "competitors": [
+            {"name": "A", "website_url": "https://a.example", "facts": ["fact a"], "features": ["cta"]},
+            {"name": "B", "website_url": "https://b.example", "facts": ["fact b"], "features": ["cta"]},
+        ],
+        "common_features": [{"feature": "cta", "observed_in": 2, "total": 2}],
+        "inferences": ["legacy inference"],
+        "recommendations": ["legacy recommendation"],
+        "confidence": "medium",
+        "failure_reason": None,
+    }
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE leads SET opportunity_type = 'first_website', first_website_reason = 'no_website', "
+            "market_research_json = ?, market_research_status = 'complete', market_research_checked_at = ? "
+            "WHERE id = ?",
+            (json.dumps(legacy), "2026-01-01T00:00:00+00:00", stored.id),
+        )
+    loaded = repository.get(stored.id or 0)
+    assert loaded is not None
+    assert loaded.market_research["benchmark_market"] is None  # type: ignore[index]
+    assert [item["name"] for item in loaded.market_research["benchmarks"]] == ["A", "B"]  # type: ignore[index,union-attr]

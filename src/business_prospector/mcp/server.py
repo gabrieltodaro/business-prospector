@@ -188,7 +188,9 @@ def update_lead(
                 source=lead.source,
             )
             lead.score = calculate_first_website_score(
-                candidate, FirstWebsiteMarketReport.from_dict(lead.market_research), config.first_website.scoring,
+                candidate, FirstWebsiteMarketReport.from_dict(
+                    lead.market_research, allow_legacy=True,
+                ), config.first_website.scoring,
             ).total
         else:
             lead.score = calculate_score(lead, config.scoring).total
@@ -290,26 +292,72 @@ def qualify_and_save_candidate(
 
 
 @mcp.tool()
-def select_first_website_competitors(
-    target: dict[str, Any], candidates: list[dict[str, Any]], max_competitors: int = 2,
+def get_first_website_benchmark_policy() -> dict[str, Any]:
+    """Return the configured market and deterministic benchmark selection limits."""
+    try:
+        config = ProspectingConfig.from_resource(_config_resource())
+        policy = config.first_website.benchmark_research
+        return _response("get_first_website_benchmark_policy", {
+            "country": policy.country,
+            "benchmark_market": policy.default_market,
+            "minimum_rating": policy.minimum_rating,
+            "minimum_reviews": policy.minimum_reviews,
+            "minimum_benchmarks": policy.minimum_benchmarks,
+            "max_benchmarks": policy.max_benchmarks,
+            "max_candidates": policy.max_candidates,
+        })
+    except (ProspectorError, TypeError, ValueError, OSError) as exc:
+        return _response("get_first_website_benchmark_policy", error=str(exc))
+
+
+@mcp.tool()
+def select_first_website_benchmarks(
+    target: dict[str, Any], candidates: list[dict[str, Any]], max_benchmarks: int = 2,
 ) -> dict[str, Any]:
-    """Select a bounded comparable set with real websites for first-website research."""
+    """Select the strongest bounded market benchmarks for first-website research."""
     try:
         service = FirstWebsiteProspectingService(
             _repository(), ProspectingConfig.from_resource(_config_resource())
         )
-        selection = service.select_competitors(target, candidates, max_competitors)
-        return _response("select_first_website_competitors", selection.to_dict())
+        selection = service.select_benchmarks(target, candidates, max_benchmarks)
+        return _response("select_first_website_benchmarks", selection.to_dict())
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("select_first_website_benchmarks", error=str(exc))
+
+
+@mcp.tool()
+def select_first_website_competitors(
+    target: dict[str, Any], candidates: list[dict[str, Any]], max_competitors: int = 2,
+) -> dict[str, Any]:
+    """Deprecated alias for select_first_website_benchmarks."""
+    try:
+        service = FirstWebsiteProspectingService(
+            _repository(), ProspectingConfig.from_resource(_config_resource())
+        )
+        selection = service.select_benchmarks(target, candidates, max_competitors)
+        data = selection.to_dict()
+        data["deprecated"] = "use select_first_website_benchmarks"
+        return _response("select_first_website_competitors", data)
     except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         return _response("select_first_website_competitors", error=str(exc))
 
 
 @mcp.tool()
 def validate_first_website_market_research(research: dict[str, Any]) -> dict[str, Any]:
-    """Validate bounded competitor facts, inferences and recommendations without browsing."""
+    """Validate bounded benchmark facts, inferences and recommendations without browsing."""
     try:
         from business_prospector.domain.first_website import FirstWebsiteMarketReport
         report = FirstWebsiteMarketReport.from_dict(research)
+        config = ProspectingConfig.from_resource(_config_resource())
+        benchmark_policy = config.first_website.benchmark_research
+        if report.benchmark_market != benchmark_policy.default_market:
+            raise ValueError("benchmark_market does not match configured market")
+        if any(
+            item.rating is None or item.rating < benchmark_policy.minimum_rating or
+            item.review_count is None or item.review_count < benchmark_policy.minimum_reviews
+            for item in report.benchmarks
+        ):
+            raise ValueError("market research contains benchmark below configured reputation policy")
         return _response("validate_first_website_market_research", {"report": report.to_dict()})
     except (ProspectorError, TypeError, ValueError) as exc:
         return _response("validate_first_website_market_research", error=str(exc))

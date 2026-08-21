@@ -71,6 +71,8 @@ Abra `http://127.0.0.1:8765`. O servidor fica restrito ao localhost por padrao; 
 
 O config default e os fixtures do demo viajam como recursos read-only do pacote, portanto `--demo` funciona no runtime instalado e independe do checkout ou do diretorio atual. Quando o MCP recebe `BUSINESS_PROSPECTOR_CONFIG`, o arquivo externo do bundle continua tendo precedencia.
 
+No fluxo `first_website`, a cidade do lead e o mercado de pesquisa sao independentes: um lead de Catanduva continua em Catanduva, enquanto benchmarks digitais sao buscados no mercado configurado (`São Paulo, SP`). Python aplica a policy propria de benchmarks e seleciona deterministicamente; isso nao e pesquisa para clonar concorrentes locais. Veja [Oportunidades de primeiro site](docs/first-website.md). TODO futuro: reusable benchmark sets with TTL/cache, sem cache nesta versao.
+
 ## OpenClaw
 
 O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Skills como filhos imediatos de `skills/`. O OpenClaw 2026.7.1 foi publicado antes do suporte a esse formato e nao examina o `plugin.json` da raiz. Para ele, `.mcp.json` oferece uma camada de compatibilidade Claude com os mesmos servidores MCP. Em uma versao que suporte Agent Plugins, a precedencia do detector escolhe `plugin.json` antes desse fallback.
@@ -108,7 +110,7 @@ No formato Agent Plugins, o OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}`
 
 ### Identidade de empresas
 
-Google Place ID tem precedencia sobre identificadores derivados. Dois registros com Place IDs nao vazios e diferentes representam Places distintos e nunca sao unidos por dominio, telefone, endereco ou nome+cidade. Esses fallbacks sao usados somente quando pelo menos um registro nao possui Place ID. Dominios compartilhados de redes sociais e perfis de terceiros nao sao identificadores de empresa. A selecao de concorrentes separa correspondencia com o alvo, duplicata dentro do pool e duplicata ja persistida.
+Google Place ID tem precedencia sobre identificadores derivados. Dois registros com Place IDs nao vazios e diferentes representam Places distintos e nunca sao unidos por dominio, telefone, endereco ou nome+cidade. Esses fallbacks sao usados somente quando pelo menos um registro nao possui Place ID. Dominios compartilhados de redes sociais e perfis de terceiros nao sao identificadores de empresa. A selecao de benchmarks separa correspondencia com o alvo, duplicata dentro do pool e duplicata ja persistida.
 
 Documentacao oficial usada para o bundle:
 
@@ -163,7 +165,7 @@ Contrato, criterios, seguranca, estados de falha e o TODO do futuro pipeline par
 
 Oliver orquestra uma descoberta Places limitada, prefiltragem deterministica, assessments Playwright sequenciais e qualificacao/salvamento por candidato. Python controla filtros, duplicatas, thresholds e score; leads qualificados chegam ao Kanban pelo mesmo SQLite. Arquitetura, outcomes, evidencia persistida, limites e validacao controlada estao em [Batch real de prospeccao](docs/real-batch.md).
 
-O fluxo separado de [oportunidades de primeiro site](docs/first-website.md) pesquisa ate 2–3 concorrentes comparaveis, valida facts/inferences/recommendations e usa score proprio. `opportunity_type` distingue `redesign` de `first_website`; ambos compartilham identidade, SQLite, Kanban e os mesmos status comerciais.
+O fluxo separado de [oportunidades de primeiro site](docs/first-website.md) pesquisa 2–3 benchmarks de mercado, valida facts/inferences/recommendations e usa score proprio. `opportunity_type` distingue `redesign` de `first_website`; ambos compartilham identidade, SQLite, Kanban e os mesmos status comerciais.
 
 ## Seguranca
 

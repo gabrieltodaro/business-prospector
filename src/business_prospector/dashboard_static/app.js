@@ -100,11 +100,17 @@ function openDetail(lead) {
   }
   if(lead.opportunity_type==='first_website'&&lead.market_research){
     const research=lead.market_research;
+    const benchmarks=research.benchmarks||research.competitors||[];
     content.append(detailSection('Pesquisa de mercado',[
-      ['Tipo','Primeiro Site'],['Motivo',lead.first_website_reason],['Concorrentes',research.competitors?.length||0],
+      ['Tipo','Primeiro Site'],['Motivo',lead.first_website_reason],['Mercado de benchmark',research.benchmark_market],['Benchmarks',benchmarks.length],
       ['Confiança',research.confidence],['Features comuns',(research.common_features||[]).map(item=>`${item.feature}: ${item.observed_in}/${item.total}`).join(' · ')],
       ['Inferências',(research.inferences||[]).join(' · ')],['Recomendações',(research.recommendations||[]).join(' · ')]
     ]));
+    benchmarks.forEach((benchmark,index)=>content.append(detailSection(`Benchmark ${index+1}`,[
+      ['Nome',benchmark.name],['Website',externalLink(benchmark.website_url,'Abrir benchmark')],
+      ['Categoria',benchmark.category],['Avaliação',benchmark.rating===null||benchmark.rating===undefined?'—':`${benchmark.rating} · ${benchmark.review_count} avaliações`],
+      ['Facts',(benchmark.facts||[]).join(' · ')]
+    ])));
   }
   content.append(detailSection('Contatos', [['Telefone',lead.phone],['WhatsApp',lead.whatsapp],['Confirmado',lead.whatsapp_confirmed?'Sim':'Não'],['Fonte WhatsApp',lead.whatsapp_source],['E-mail',lead.email],['Instagram',externalLink(lead.instagram,'Abrir Instagram')]]));
   content.append(detailSection('Prospecção', [['Score',lead.score],['Status',labels[visualStatus(lead.status)]||lead.status],['Batch',lead.batch_id],['Fonte',lead.source],['Descoberto em',lead.discovered_at],['Última verificação',lead.last_checked_at]]));

@@ -30,7 +30,7 @@ Antes do Playwright, Python classifica a presenca web pelo hostname parseado, se
 - `third_party_profile`: bio-link/profile aggregator, como Linktree;
 - `invalid_url`: URL malformada ou com protocolo nao permitido.
 
-Somente `own_website` e `hosted_website` entram no redesign/Playwright. `no_website`, `social_only` e `third_party_profile`, com rating >= 3.5, entram em `deferred_first_website` com motivo explicito, nao visitam Playwright e nao sao salvos como redesign. Rating abaixo de 3.5 fica em rejeicao de reputacao. O futuro fluxo de primeiro website, concorrentes e estrategia do zero permanece fora do escopo. A classificacao usa `urllib.parse`, conforme a [documentacao oficial](https://docs.python.org/3/library/urllib.parse.html).
+Somente `own_website` e `hosted_website` entram no redesign/Playwright. `no_website`, `social_only` e `third_party_profile`, com rating >= 3.5, entram em `deferred_first_website` com motivo explicito e nao sao salvos como redesign. Quando `first_website` e solicitado, o fluxo separado usa benchmarks do mercado configurado e estrategia original; a cidade do lead nao muda. A classificacao usa `urllib.parse`, conforme a [documentacao oficial](https://docs.python.org/3/library/urllib.parse.html).
 
 ## Evidencia e persistencia
 

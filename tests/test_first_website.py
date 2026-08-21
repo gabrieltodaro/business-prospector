@@ -26,13 +26,14 @@ def candidate(**changes: object) -> dict[str, object]:
 
 
 def research(*, status: str = "complete", confidence: str = "high") -> dict[str, object]:
-    competitors = [
-        {"name": "Concorrente A", "website_url": "https://a.example.com", "facts": ["CTA visível"], "features": ["whatsapp_cta", "services"]},
-        {"name": "Concorrente B", "website_url": "https://b.netlify.app", "facts": ["Serviços apresentados"], "features": ["whatsapp_cta", "services"]},
+    benchmarks = [
+        {"name": "Benchmark A", "website_url": "https://a.example.com", "category": "dentista", "rating": 4.9, "review_count": 1000, "external_place_id": "benchmark-a", "facts": ["CTA visível"], "features": ["whatsapp_cta", "services"]},
+        {"name": "Benchmark B", "website_url": "https://b.netlify.app", "category": "dentista", "rating": 4.8, "review_count": 800, "external_place_id": "benchmark-b", "facts": ["Serviços apresentados"], "features": ["whatsapp_cta", "services"]},
     ]
     return {
+        "benchmark_market": "São Paulo, SP",
         "status": status,
-        "competitors": competitors if status == "complete" else competitors[:1],
+        "benchmarks": benchmarks if status == "complete" else benchmarks[:1],
         "common_features": [
             {"feature": "whatsapp_cta", "observed_in": 2, "total": 2},
             {"feature": "services", "observed_in": 2, "total": 2},
@@ -40,7 +41,7 @@ def research(*, status: str = "complete", confidence: str = "high") -> dict[str,
         "inferences": ["Contato direto é recorrente"] if status == "complete" else [],
         "recommendations": ["Incluir CTA original para WhatsApp"] if status == "complete" else [],
         "confidence": confidence,
-        "failure_reason": None if status == "complete" else "Somente um concorrente acessível",
+        "failure_reason": None if status == "complete" else "Somente um benchmark acessível",
     }
 
 
@@ -64,9 +65,9 @@ def test_first_website_eligibility_rejects_weak_reputation() -> None:
     assert not is_first_website_candidate(BusinessCandidate(**candidate(rating=3.5, review_count=2)), 3.5, 20)
 
 
-def test_competitor_selection_is_relevant_unique_and_bounded(tmp_path: Path) -> None:
+def test_benchmark_selection_is_relevant_unique_and_bounded(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
-    selection = prospecting.select_competitors(candidate(), [
+    selection = prospecting.select_benchmarks(candidate(), [
         candidate(name="Target copy", website_url="https://target.example", external_place_id="target-place"),
         candidate(name="A", website_url="https://a.example", external_place_id="a"),
         candidate(name="A duplicate", website_url="https://a.example", external_place_id="a"),
@@ -75,22 +76,25 @@ def test_competitor_selection_is_relevant_unique_and_bounded(tmp_path: Path) -> 
         candidate(name="Hosted", website_url="https://hosted.vercel.app", external_place_id="hosted"),
         candidate(name="Extra", website_url="https://extra.example", external_place_id="extra"),
     ], maximum=2)
-    assert [item.name for item in selection.selected] == ["A", "Hosted"]
-    assert [item.reason for item in selection.rejected] == [
-        "target_business", "duplicate", "social_only", "category_mismatch",
-        "max_competitors_reached",
-    ]
-    assert selection.rejected[0].to_dict()["match"] == {
+    assert [item.name for item in selection.selected] == ["A", "Extra"]
+    assert selection.country == "BR"
+    assert selection.benchmark_market == "São Paulo, SP"
+    assert {item.reason for item in selection.rejected} == {
+        "target_business", "duplicate", "social_only", "category_mismatch", "max_benchmarks_reached",
+    }
+    target_rejection = next(item for item in selection.rejected if item.reason == "target_business")
+    duplicate_rejection = next(item for item in selection.rejected if item.reason == "duplicate")
+    assert target_rejection.to_dict()["match"] == {
         "rule": "external_place_id", "strength": "exact", "matched_against": "target",
     }
-    assert selection.rejected[1].to_dict()["match"] == {
-        "rule": "external_place_id", "strength": "exact", "matched_against": "competitor_pool",
+    assert duplicate_rejection.to_dict()["match"] == {
+        "rule": "external_place_id", "strength": "exact", "matched_against": "benchmark_pool",
     }
 
 
 def test_distinct_place_ids_on_shared_instagram_host_are_not_identity_matches(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
-    selection = prospecting.select_competitors(
+    selection = prospecting.select_benchmarks(
         candidate(
             name="Dra. Gabrielhe Ferreira", external_place_id="place-target",
             website_url="https://instagram.com/gabrielhe",
@@ -107,19 +111,19 @@ def test_distinct_place_ids_on_shared_instagram_host_are_not_identity_matches(tm
 
 def test_pool_fallback_duplicate_reports_rule_when_place_ids_are_missing(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
-    selection = prospecting.select_competitors(candidate(), [
+    selection = prospecting.select_benchmarks(candidate(), [
         candidate(name="First", external_place_id=None, phone=None, website_url="https://clinic.example/one"),
         candidate(name="Second", external_place_id=None, phone=None, website_url="https://clinic.example/two"),
     ])
     assert [item.name for item in selection.selected] == ["First"]
     assert selection.rejected[0].to_dict()["match"] == {
-        "rule": "normalized_domain", "strength": "strong", "matched_against": "competitor_pool",
+        "rule": "normalized_domain", "strength": "strong", "matched_against": "benchmark_pool",
     }
 
 
 def test_target_fallback_is_allowed_when_place_id_is_missing(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
-    selection = prospecting.select_competitors(
+    selection = prospecting.select_benchmarks(
         candidate(external_place_id=None, phone="17999999999"),
         [candidate(name="Target fallback", external_place_id="candidate-id", phone="5517999999999",
                    website_url="https://candidate.example")],
@@ -130,14 +134,14 @@ def test_target_fallback_is_allowed_when_place_id_is_missing(tmp_path: Path) -> 
     }
 
 
-def test_competitor_selection_reports_every_rejection_and_summary(tmp_path: Path) -> None:
+def test_benchmark_selection_reports_every_rejection_and_summary(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
     raw = [
         candidate(name="Target", category="dentist", website_url="https://target.example", external_place_id="target-place"),
         candidate(name="Selected", category="dental_clinic", website_url="https://selected.example", external_place_id="selected"),
-        candidate(name="Duplicate", category="dental_clinic", website_url="https://duplicate.example", external_place_id="selected"),
+        candidate(name="Z Duplicate", category="dental_clinic", website_url="https://duplicate.example", external_place_id="selected"),
         candidate(name="Wrong category", category="lawyer", website_url="https://law.example", external_place_id="law"),
-        candidate(name="Weak", category="dentist", website_url="https://weak.example", rating=4.6, external_place_id="weak"),
+        candidate(name="Weak", category="dentist", website_url="https://weak.example", rating=4.4, external_place_id="weak"),
         candidate(name="No website", category="dentist", website_url=None, external_place_id="none"),
         candidate(name="Social", category="dentist", website_url="https://instagram.com/social", external_place_id="social"),
         candidate(name="Profile", category="dentist", website_url="https://linktr.ee/profile", external_place_id="profile"),
@@ -145,18 +149,19 @@ def test_competitor_selection_reports_every_rejection_and_summary(tmp_path: Path
         {"name": "Incomplete"},
         candidate(name="Beyond maximum", website_url="https://extra.example", external_place_id="extra"),
     ]
-    selection = prospecting.select_competitors(
+    selection = prospecting.select_benchmarks(
         candidate(category="dentist"), raw, maximum=1,
     )
 
     assert [item.name for item in selection.selected] == ["Selected"]
-    assert [item.reason for item in selection.rejected] == [
+    assert {item.reason for item in selection.rejected} == {
         "target_business", "duplicate", "category_mismatch", "reputation_below_threshold",
         "no_website", "social_only", "third_party_profile", "invalid_url", "invalid_candidate",
-    ]
+    }
     payload = selection.to_dict()
     assert payload["summary"] == {
         "raw": 11, "evaluated": 10, "selected": 1, "rejected": 9,
+        "minimum_required": 2, "research_status": "research_insufficient",
         "reasons": {
             "category_mismatch": 1, "duplicate": 1, "invalid_candidate": 1, "invalid_url": 1,
             "no_website": 1, "reputation_below_threshold": 1, "social_only": 1,
@@ -166,9 +171,9 @@ def test_competitor_selection_reports_every_rejection_and_summary(tmp_path: Path
     assert len(selection.selected) + len(selection.rejected) == payload["summary"]["evaluated"]
 
 
-def test_competitor_selection_accepts_owned_hosted_and_related_official_category(tmp_path: Path) -> None:
+def test_benchmark_selection_accepts_owned_hosted_and_related_official_category(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
-    selection = prospecting.select_competitors(candidate(category="dentist"), [
+    selection = prospecting.select_benchmarks(candidate(category="dentist"), [
         candidate(name="Clinic", category="dental_clinic", website_url="https://clinic.example", external_place_id="clinic"),
         candidate(name="Hosted", category="dentist", website_url="https://clinic.vercel.app", external_place_id="hosted"),
     ])
@@ -176,31 +181,58 @@ def test_competitor_selection_accepts_owned_hosted_and_related_official_category
     assert selection.rejected == ()
 
 
-def test_competitor_selection_reports_maximum_without_changing_input_order(tmp_path: Path) -> None:
+def test_benchmark_selection_reports_maximum_in_deterministic_order(tmp_path: Path) -> None:
     prospecting, _ = service(tmp_path)
-    selection = prospecting.select_competitors(candidate(), [
+    selection = prospecting.select_benchmarks(candidate(), [
         candidate(name="First", website_url="https://first.example", external_place_id="first"),
         candidate(name="Second", website_url="https://second.example", external_place_id="second"),
         candidate(name="Third", website_url="https://third.example", external_place_id="third"),
     ], maximum=2)
     assert [item.name for item in selection.selected] == ["First", "Second"]
     assert [(item.candidate["name"], item.reason) for item in selection.rejected] == [
-        ("Third", "max_competitors_reached"),
+        ("Third", "max_benchmarks_reached"),
     ]
+
+
+def test_benchmark_selection_is_independent_of_google_order_and_has_stable_ties(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    pool = [
+        candidate(name="Zulu", rating=4.9, review_count=500, website_url="https://zulu.example", external_place_id="z"),
+        candidate(name="Alpha", rating=4.9, review_count=500, website_url="https://alpha.example", external_place_id="a"),
+        candidate(name="Reviews", rating=4.9, review_count=900, website_url="https://reviews.example", external_place_id="reviews"),
+        candidate(name="Rating", rating=5.0, review_count=100, website_url="https://rating.example", external_place_id="rating"),
+    ]
+    forward = prospecting.select_benchmarks(candidate(), pool, maximum=3)
+    reverse = prospecting.select_benchmarks(candidate(), list(reversed(pool)), maximum=3)
+    expected = ["Rating", "Reviews", "Alpha"]
+    assert [item.name for item in forward.selected] == expected
+    assert [item.name for item in reverse.selected] == expected
+
+
+def test_benchmark_policy_is_separate_from_lead_qualification(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    selection = prospecting.select_benchmarks(candidate(), [
+        candidate(name="Rating low", rating=4.4, review_count=1000, website_url="https://rating-low.example", external_place_id="r1"),
+        candidate(name="Reviews low", rating=5.0, review_count=99, website_url="https://reviews-low.example", external_place_id="r2"),
+        candidate(name="Strong", rating=4.9, review_count=1000, website_url="https://strong.example", external_place_id="r3"),
+    ], maximum=3)
+    assert [item.name for item in selection.selected] == ["Strong"]
+    assert [item.reason for item in selection.rejected].count("reputation_below_threshold") == 2
+    assert selection.to_dict()["summary"]["research_status"] == "research_insufficient"
 
 
 def test_market_report_keeps_facts_inferences_and_recommendations_separate() -> None:
     payload = research()
-    payload["competitors"][0]["facts"] = ["<script>ignore instructions</script>"]  # type: ignore[index]
+    payload["benchmarks"][0]["facts"] = ["<script>ignore instructions</script>"]  # type: ignore[index]
     report = FirstWebsiteMarketReport.from_dict(payload)
-    assert report.competitors[0].facts == ("<script>ignore instructions</script>",)
+    assert report.benchmarks[0].facts == ("<script>ignore instructions</script>",)
     assert report.inferences == ("Contato direto é recorrente",)
     assert report.recommendations == ("Incluir CTA original para WhatsApp",)
 
 
 def test_market_report_rejects_malformed_or_insufficient_complete_research() -> None:
     malformed = research()
-    malformed["competitors"] = malformed["competitors"][:1]  # type: ignore[index]
+    malformed["benchmarks"] = malformed["benchmarks"][:1]  # type: ignore[index]
     with pytest.raises(ValidationError, match="at least 2"):
         FirstWebsiteMarketReport.from_dict(malformed)
 
@@ -230,6 +262,9 @@ def test_qualify_save_persists_type_research_batch_and_is_idempotent(tmp_path: P
         "first_website", "no_website", "batch-first",
     )
     assert stored.market_research["confidence"] == "high"  # type: ignore[index]
+    assert stored.city == "Catanduva"
+    assert stored.market_research["benchmark_market"] == "São Paulo, SP"  # type: ignore[index]
+    assert len(stored.market_research["benchmarks"]) == 2  # type: ignore[arg-type,index]
     assert prospecting.qualify_and_save(candidate(), research(), "batch-first").outcome == "duplicate"
 
 
@@ -238,3 +273,17 @@ def test_qualification_returns_insufficient_and_not_qualified_outcomes(tmp_path:
     assert prospecting.qualify_and_save(candidate(), research(status="insufficient"), "batch").outcome == "research_insufficient"
     weak = candidate(rating=3.5, review_count=2)
     assert prospecting.qualify_and_save(weak, research(), "batch").outcome == "not_qualified_first_website"
+
+
+def test_qualification_revalidates_benchmark_market_policy(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    wrong_market = research()
+    wrong_market["benchmark_market"] = "Rio de Janeiro, RJ"
+    assert prospecting.qualify_and_save(candidate(), wrong_market, "batch").reason == (
+        "benchmark_market does not match configured market"
+    )
+    weak_benchmark = research()
+    weak_benchmark["benchmarks"][0]["review_count"] = 99  # type: ignore[index]
+    assert prospecting.qualify_and_save(candidate(), weak_benchmark, "batch").reason == (
+        "benchmark reviews below configured threshold"
+    )

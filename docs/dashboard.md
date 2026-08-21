@@ -54,7 +54,7 @@ As colunas persistidas sao:
 
 Cada card mostra empresa, cidade, categoria, score persistido, rating, numero de avaliacoes, motivo de qualificacao, quantidade de issues e indicadores de website/WhatsApp/telefone/e-mail. A ordenacao prioriza score e avaliacoes. Busca, cidade, categoria e score minimo filtram a visualizacao em memoria; a API tambem aceita `status`, `city`, `category` e `min_score` em `GET /api/leads`.
 
-O painel lateral e read-only e apresenta dados do negocio, Maps/Place ID, website, motivo e flags legadas do assessment, contatos, score/status/fonte e timestamps. Fatos e inferencias estruturados do Playwright ainda nao sao persistidos pelo modelo atual, portanto nao sao inventados pelo dashboard. O breakdown do score tambem nao e persistido e nao e recalculado no JavaScript.
+O painel lateral e read-only e apresenta dados do negocio, Maps/Place ID, website, motivo e flags do assessment, contatos, score/status/fonte e timestamps. Para `first_website`, tambem mostra benchmark market, benchmarks utilizados, rating/reviews, facts, features comuns, inferences, recommendations e confidence persistidos no report validado. O breakdown do score nao e persistido nem recalculado no JavaScript.
 
 A unica escrita e:
 

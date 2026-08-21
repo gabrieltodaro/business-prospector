@@ -25,31 +25,72 @@ def _bounded_strings(value: Any, field_name: str, maximum: int = 20) -> tuple[st
 
 
 @dataclass(frozen=True, slots=True)
-class CompetitorObservation:
+class BenchmarkObservation:
     name: str
     website_url: str
+    category: str | None
+    rating: float | None
+    review_count: int | None
+    external_place_id: str | None
     facts: tuple[str, ...]
     features: tuple[str, ...]
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "CompetitorObservation":
+    def from_dict(cls, payload: dict[str, Any], *, allow_legacy: bool = False) -> "BenchmarkObservation":
+        if not isinstance(payload, dict):
+            raise ValidationError("benchmark observation must be an object")
         name = payload.get("name")
         website_url = payload.get("website_url")
         if not isinstance(name, str) or not name.strip() or len(name) > 200:
-            raise ValidationError("competitor name is required and limited to 200 characters")
+            raise ValidationError("benchmark name is required and limited to 200 characters")
+        if not isinstance(website_url, str):
+            raise ValidationError("benchmark website_url is required")
         if classify_website_presence(website_url).presence not in {
             WebsitePresence.OWN_WEBSITE, WebsitePresence.HOSTED_WEBSITE,
         }:
-            raise ValidationError("competitor must have an owned or hosted website")
+            raise ValidationError("benchmark must have an owned or hosted website")
+        category = payload.get("category")
+        rating = payload.get("rating")
+        review_count = payload.get("review_count")
+        external_place_id = payload.get("external_place_id")
+        if not allow_legacy and (not isinstance(category, str) or not category.strip()):
+            raise ValidationError("benchmark category is required")
+        if category is not None and (not isinstance(category, str) or not category.strip() or len(category) > 200):
+            raise ValidationError("benchmark category must be a non-empty string up to 200 characters")
+        if not allow_legacy and (isinstance(rating, bool) or not isinstance(rating, (int, float))):
+            raise ValidationError("benchmark rating is required")
+        if rating is not None and (isinstance(rating, bool) or not isinstance(rating, (int, float)) or not 0 <= rating <= 5):
+            raise ValidationError("benchmark rating must be between 0 and 5")
+        if not allow_legacy and (isinstance(review_count, bool) or not isinstance(review_count, int)):
+            raise ValidationError("benchmark review_count is required")
+        if review_count is not None and (isinstance(review_count, bool) or not isinstance(review_count, int) or review_count < 0):
+            raise ValidationError("benchmark review_count cannot be negative")
+        if external_place_id is not None and (
+            not isinstance(external_place_id, str) or not external_place_id.strip() or len(external_place_id) > 300
+        ):
+            raise ValidationError("benchmark external_place_id is invalid")
         return cls(
             name=name,
             website_url=website_url,
-            facts=_bounded_strings(payload.get("facts"), "competitor facts"),
-            features=_bounded_strings(payload.get("features"), "competitor features"),
+            category=category,
+            rating=float(rating) if rating is not None else None,
+            review_count=review_count,
+            external_place_id=external_place_id,
+            facts=_bounded_strings(payload.get("facts"), "benchmark facts"),
+            features=_bounded_strings(payload.get("features"), "benchmark features"),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "website_url": self.website_url, "facts": list(self.facts), "features": list(self.features)}
+        return {
+            "name": self.name,
+            "website_url": self.website_url,
+            "category": self.category,
+            "rating": self.rating,
+            "review_count": self.review_count,
+            "external_place_id": self.external_place_id,
+            "facts": list(self.facts),
+            "features": list(self.features),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +117,8 @@ class FeatureFrequency:
 @dataclass(frozen=True, slots=True)
 class FirstWebsiteMarketReport:
     status: str
-    competitors: tuple[CompetitorObservation, ...]
+    benchmark_market: str | None
+    benchmarks: tuple[BenchmarkObservation, ...]
     common_features: tuple[FeatureFrequency, ...]
     inferences: tuple[str, ...]
     recommendations: tuple[str, ...]
@@ -84,7 +126,9 @@ class FirstWebsiteMarketReport:
     failure_reason: str | None = None
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "FirstWebsiteMarketReport":
+    def from_dict(
+        cls, payload: dict[str, Any], *, allow_legacy: bool = False,
+    ) -> "FirstWebsiteMarketReport":
         if not isinstance(payload, dict):
             raise ValidationError("market research must be an object")
         status = payload.get("status")
@@ -93,10 +137,23 @@ class FirstWebsiteMarketReport:
             raise ValidationError("invalid market research status")
         if confidence not in CONFIDENCE_LEVELS:
             raise ValidationError("invalid market research confidence")
-        raw_competitors = payload.get("competitors")
-        if not isinstance(raw_competitors, list) or len(raw_competitors) > 3:
-            raise ValidationError("market research supports at most 3 competitors")
-        competitors = tuple(CompetitorObservation.from_dict(item) for item in raw_competitors)
+        benchmark_market = payload.get("benchmark_market")
+        if not allow_legacy and (
+            not isinstance(benchmark_market, str) or not benchmark_market.strip() or len(benchmark_market) > 200
+        ):
+            raise ValidationError("benchmark_market is required and limited to 200 characters")
+        if benchmark_market is not None and (
+            not isinstance(benchmark_market, str) or not benchmark_market.strip() or len(benchmark_market) > 200
+        ):
+            raise ValidationError("benchmark_market must be a non-empty string up to 200 characters")
+        raw_benchmarks = payload.get("benchmarks")
+        if raw_benchmarks is None and allow_legacy:
+            raw_benchmarks = payload.get("competitors")
+        if not isinstance(raw_benchmarks, list) or len(raw_benchmarks) > 3:
+            raise ValidationError("market research supports at most 3 benchmarks")
+        benchmarks = tuple(
+            BenchmarkObservation.from_dict(item, allow_legacy=allow_legacy) for item in raw_benchmarks
+        )
         raw_features = payload.get("common_features")
         if not isinstance(raw_features, list) or len(raw_features) > 20:
             raise ValidationError("common_features supports at most 20 items")
@@ -106,19 +163,20 @@ class FirstWebsiteMarketReport:
             not isinstance(failure_reason, str) or not failure_reason.strip() or len(failure_reason) > 500
         ):
             raise ValidationError("failure_reason must be a string up to 500 characters")
-        if status == "complete" and len(competitors) < 2:
-            raise ValidationError("complete market research requires at least 2 competitors")
+        if status == "complete" and len(benchmarks) < 2:
+            raise ValidationError("complete market research requires at least 2 benchmarks")
         if status == "complete" and failure_reason:
             raise ValidationError("complete market research cannot have a failure_reason")
         if status != "complete" and not failure_reason:
             raise ValidationError("incomplete market research requires a failure_reason")
         if status == "complete" and (not features or not payload.get("recommendations")):
             raise ValidationError("complete market research requires features and recommendations")
-        if any(item.total != len(competitors) for item in features):
-            raise ValidationError("feature totals must equal competitors inspected")
+        if any(item.total != len(benchmarks) for item in features):
+            raise ValidationError("feature totals must equal benchmarks inspected")
         return cls(
             status=status,
-            competitors=competitors,
+            benchmark_market=benchmark_market,
+            benchmarks=benchmarks,
             common_features=features,
             inferences=_bounded_strings(payload.get("inferences"), "inferences"),
             recommendations=_bounded_strings(payload.get("recommendations"), "recommendations"),
@@ -129,7 +187,8 @@ class FirstWebsiteMarketReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
-            "competitors": [item.to_dict() for item in self.competitors],
+            "benchmark_market": self.benchmark_market,
+            "benchmarks": [item.to_dict() for item in self.benchmarks],
             "common_features": [item.to_dict() for item in self.common_features],
             "inferences": list(self.inferences),
             "recommendations": list(self.recommendations),

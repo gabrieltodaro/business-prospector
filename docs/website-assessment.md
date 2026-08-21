@@ -69,4 +69,4 @@ Never persist full HTML, scripts, arbitrary page dumps, secrets, or prompt-like 
 
 ## No-website future opportunity
 
-Businesses without websites remain outside the current redesign pipeline, but they are not conceptually worthless. A future, separate “first website opportunity” pipeline should consider businesses rated at least 3.5, research competitors, infer category expectations from evidence, and build a from-scratch strategy with separate commercial positioning. This is intentionally not implemented yet.
+Businesses without websites remain outside the redesign pipeline. The separate `first_website` pipeline considers eligible businesses rated at least 3.5, researches strong market benchmarks in the configured market, infers category expectations from bounded evidence, and supports an original from-scratch strategy. It does not clone local competitors.

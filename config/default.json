@@ -25,12 +25,18 @@
     "minimum_rating": 3.5,
     "minimum_reviews": 20,
     "minimum_score": 55,
-    "minimum_competitors": 2,
-    "max_competitors": 3,
-    "max_competitor_candidates": 10,
     "compatible_category_groups": [
       ["dentist", "dental_clinic"]
     ],
+    "benchmark_research": {
+      "country": "BR",
+      "default_market": "São Paulo, SP",
+      "minimum_rating": 4.5,
+      "minimum_reviews": 100,
+      "minimum_benchmarks": 2,
+      "max_benchmarks": 3,
+      "max_candidates": 10
+    },
     "scoring": {
       "business_quality": 40,
       "digital_presence_gap": 30,
