@@ -3,6 +3,24 @@ set -eu
 
 PLUGIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 DEFAULT_PYTHON="${HOME}/.openclaw/venvs/business-prospector/bin/python"
+OPENCLAW_GATEWAY_ENV="${HOME}/.openclaw/service-env/ai.openclaw.gateway.env"
+
+# OpenClaw 2026.7.1 intentionally launches stdio MCP servers with a sanitized
+# base environment. Agent Plugins also defines no portable secret interpolation.
+# If the host did not forward this credential, recover only this one value from
+# OpenClaw's user-owned service environment without printing or persisting it.
+if [ -z "${GOOGLE_MAPS_API_KEY:-}" ] && [ -r "$OPENCLAW_GATEWAY_ENV" ]; then
+  GOOGLE_MAPS_API_KEY=$(
+    unset GOOGLE_MAPS_API_KEY
+    set +u
+    # shellcheck disable=SC1090 -- OpenClaw owns this per-user generated file.
+    . "$OPENCLAW_GATEWAY_ENV"
+    printf '%s' "${GOOGLE_MAPS_API_KEY:-}"
+  )
+  if [ -n "$GOOGLE_MAPS_API_KEY" ]; then
+    export GOOGLE_MAPS_API_KEY
+  fi
+fi
 
 if [ -n "${BUSINESS_PROSPECTOR_PYTHON:-}" ]; then
   PROSPECTOR_PYTHON=$BUSINESS_PROSPECTOR_PYTHON
@@ -22,5 +40,13 @@ if [ "${1:-}" = "--check" ]; then
   exit 0
 fi
 
-exec "$PROSPECTOR_PYTHON" "$PLUGIN_DIR/run_mcp.py" "$@"
+if [ "${1:-}" = "--check-google-places-env" ]; then
+  if [ -n "${GOOGLE_MAPS_API_KEY:-}" ]; then
+    echo "business-prospector Google Places environment: configured"
+    exit 0
+  fi
+  echo "business-prospector Google Places environment: not configured" >&2
+  exit 78
+fi
 
+exec "$PROSPECTOR_PYTHON" "$PLUGIN_DIR/run_mcp.py" "$@"
