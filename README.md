@@ -17,7 +17,7 @@ DiscoveryProvider
   -> ranking
 ```
 
-O provider fake continua disponivel e funciona sem rede. A descoberta real usa Places API (New) Text Search com `GOOGLE_MAPS_API_KEY`; nenhuma credencial e armazenada no repositorio. Playwright MCP `0.0.79` esta fixado no bundle, mas ainda nao existe um `WebsiteAssessmentProvider` real que o componha automaticamente com a descoberta Google.
+O provider fake continua disponivel e funciona sem rede. A descoberta real usa Places API (New) Text Search com `GOOGLE_MAPS_API_KEY`; nenhuma credencial e armazenada no repositorio. Playwright MCP `0.0.79` fornece evidencias estruturadas, e Oliver coordena os dois MCPs por meio de `validate_website_assessment`; o pacote Python nao acopla o dominio ao runtime OpenClaw.
 
 ## Arquitetura
 
@@ -82,7 +82,7 @@ O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Ski
    ```
 
    No OpenClaw 2026.7.1, o formato continuara sendo `claude`, mas `mcpServers` deve deixar de estar vazio. Para obter `bundleFormat: agent`, atualize para uma versao que contenha o suporte a Agent Plugins.
-5. Inicie uma nova sessao do Oliver Queen. Use `business-prospector__prospect_fake` para o pipeline deterministico offline, ou `business-prospector__prospect_places` para descoberta real controlada. A operacao real ainda nao avalia websites nem salva leads.
+5. Inicie uma nova sessao do Oliver Queen. Use `business-prospector__prospect_fake` para o pipeline deterministico offline. No fluxo real controlado, use `prospect_places`, Playwright, `validate_website_assessment`, `find_duplicate` e somente entao `save_lead`.
 
 No formato Agent Plugins, o OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` ao iniciar o MCP. No fallback 2026.7.1, expande `${CLAUDE_PLUGIN_ROOT}`. Nenhum path absoluto do autor ou de Windows e necessario.
 
@@ -128,6 +128,12 @@ python -m business_prospector.google_places_smoke --niche dentistas --city 'Cata
 ```
 
 Campos, custo/SKU, seguranca e troubleshooting estao em [Google Places discovery](docs/google-places.md). O guia de criacao/restricao da credencial permanece em [GOOGLE PLACES SETUP REQUIRED](docs/google-places-setup.md).
+
+## Website assessment
+
+O assessment real e orquestrado por Oliver: Playwright produz snapshots de acessibilidade e evidencias desktop/mobile; `business-prospector__validate_website_assessment` valida status, fatos, inferencias e elegibilidade para scoring. Falhas de browser ou acesso nunca viram flags de oportunidade. O score continua exclusivamente no Python ao salvar o lead.
+
+Contrato, criterios, seguranca, estados de falha e o TODO do futuro pipeline para empresas sem website estao em [Website assessment with Playwright MCP](docs/website-assessment.md).
 
 ## Seguranca
 

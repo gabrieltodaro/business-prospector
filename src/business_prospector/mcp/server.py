@@ -14,6 +14,7 @@ from business_prospector.application.prospecting import ProspectingService
 from business_prospector.domain.exceptions import ProspectorError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
 from business_prospector.domain.scoring import calculate_score
+from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.infrastructure.fake_providers import (
     FakeBusinessDiscoveryProvider,
     FakeWebsiteAssessmentProvider,
@@ -225,6 +226,30 @@ def prospect_places(niche: str, city: str, limit: int = 10) -> dict[str, Any]:
     except (ProspectorError, ValueError, OSError) as exc:
         LOGGER.warning("prospect_places failed: %s", exc)
         return _response("prospect_places", error=str(exc))
+
+
+@mcp.tool()
+def validate_website_assessment(assessment: dict[str, Any]) -> dict[str, Any]:
+    """Validate Playwright-derived facts/inferences; never browses, scores, or saves a lead."""
+    try:
+        report = WebsiteAssessmentReport.from_dict(assessment)
+        data: dict[str, Any] = {"report": report.to_dict(), "legacy_assessment": None}
+        if report.scoring_eligible:
+            legacy = report.to_website_assessment()
+            data["legacy_assessment"] = {
+                "layout_issue": legacy.layout,
+                "mobile_issue": legacy.mobile,
+                "cta_issue": legacy.cta,
+                "content_issue": legacy.content,
+                "social_proof_issue": legacy.social_proof,
+                "platform_issue": legacy.platform,
+                "qualification_reason": legacy.reason,
+                "website_issue_count": legacy.issue_count,
+            }
+        return _response("validate_website_assessment", data)
+    except (ProspectorError, TypeError, ValueError) as exc:
+        LOGGER.warning("validate_website_assessment failed: %s", exc)
+        return _response("validate_website_assessment", error=str(exc))
 
 
 def main() -> None:

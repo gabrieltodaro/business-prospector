@@ -51,6 +51,10 @@ class ProspectingService:
                 result.rejected_reputation += 1
                 continue
             if not candidate.website_url:
+                # TODO(first-website-opportunity): A reputable business without a website is a
+                # separate future opportunity type, not a permanently worthless/rejected lead.
+                # Build a distinct >=3.5-rating pipeline with competitor research and a
+                # from-scratch website strategy; do not mix it into redesign qualification.
                 result.rejected_no_website += 1
                 continue
             if self._repository.find_duplicate(candidate):
