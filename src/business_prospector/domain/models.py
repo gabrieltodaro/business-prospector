@@ -66,6 +66,9 @@ class BusinessCandidate:
     instagram: str | None = None
     source: str = "fake"
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass(slots=True)
 class Lead:
@@ -138,4 +141,3 @@ class Lead:
         data = asdict(self)
         data["website_issue_count"] = self.assessment.issue_count
         return data
-

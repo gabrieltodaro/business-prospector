@@ -17,13 +17,14 @@ DiscoveryProvider
   -> ranking
 ```
 
-O provider inicial e fake e funciona sem rede. Google Places ainda nao esta implementado. Playwright MCP `0.0.79` esta fixado no bundle para assessment de websites, evitando uma dependencia flutuante em `@latest`.
+O provider fake continua disponivel e funciona sem rede. A descoberta real usa Places API (New) Text Search com `GOOGLE_MAPS_API_KEY`; nenhuma credencial e armazenada no repositorio. Playwright MCP `0.0.79` esta fixado no bundle, mas ainda nao existe um `WebsiteAssessmentProvider` real que o componha automaticamente com a descoberta Google.
 
 ## Arquitetura
 
 - `src/business_prospector/domain`: modelos, validacao, normalizacao e scoring;
 - `src/business_prospector/application`: casos de uso, configuracao e Protocols dos providers/repository;
 - `src/business_prospector/infrastructure`: SQLite e providers fake;
+- `src/business_prospector/infrastructure/google_places.py`: adapter REST para Places API (New);
 - `src/business_prospector/mcp`: tools estruturadas do MVP;
 - `skills`: Skills ativas do OpenClaw;
 - `config/default.json`: thresholds, limites, cidades e pesos;
@@ -81,7 +82,7 @@ O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Ski
    ```
 
    No OpenClaw 2026.7.1, o formato continuara sendo `claude`, mas `mcpServers` deve deixar de estar vazio. Para obter `bundleFormat: agent`, atualize para uma versao que contenha o suporte a Agent Plugins.
-5. Inicie uma nova sessao do Oliver Queen e use `prospector-setup` ou solicite uma prospeccao. Enquanto o provider for `fake`, use `business-prospector__prospect_fake` para validacao offline.
+5. Inicie uma nova sessao do Oliver Queen. Use `business-prospector__prospect_fake` para o pipeline deterministico offline, ou `business-prospector__prospect_places` para descoberta real controlada. A operacao real ainda nao avalia websites nem salva leads.
 
 No formato Agent Plugins, o OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` ao iniciar o MCP. No fallback 2026.7.1, expande `${CLAUDE_PLUGIN_ROOT}`. Nenhum path absoluto do autor ou de Windows e necessario.
 
@@ -118,7 +119,15 @@ Dashboard, redesign/criacao de website, envio de WhatsApp ou e-mail, propostas, 
 
 ## Google Places
 
-O codigo contem apenas a abstracao `BusinessDiscoveryProvider`; nenhuma chamada Google e feita. Siga [GOOGLE PLACES SETUP REQUIRED](docs/google-places-setup.md) para preparar a credencial de forma segura. Depois disso sera implementado `GooglePlacesBusinessDiscoveryProvider`, preferencialmente com Places API (New), sem alterar as regras de negocio.
+`GooglePlacesBusinessDiscoveryProvider` implementa `BusinessDiscoveryProvider` via `POST places:searchText`, usando exclusivamente Places API (New). A chave vem de `GOOGLE_MAPS_API_KEY` e e enviada somente em `X-Goog-Api-Key`.
+
+Teste real minimo, com uma unica resposta:
+
+```bash
+python -m business_prospector.google_places_smoke --niche dentistas --city 'Catanduva, SP' --limit 1
+```
+
+Campos, custo/SKU, seguranca e troubleshooting estao em [Google Places discovery](docs/google-places.md). O guia de criacao/restricao da credencial permanece em [GOOGLE PLACES SETUP REQUIRED](docs/google-places-setup.md).
 
 ## Seguranca
 

@@ -1,6 +1,6 @@
 # GOOGLE PLACES SETUP REQUIRED
 
-O provider real ainda nao esta implementado nem ativado. O proximo adapter sera `GooglePlacesBusinessDiscoveryProvider`, usando Places API (New) e o secret `GOOGLE_MAPS_API_KEY`.
+O provider real e `GooglePlacesBusinessDiscoveryProvider`, usando Places API (New) e o secret `GOOGLE_MAPS_API_KEY`. Ele e ativado explicitamente por `prospect_places`; `prospect_fake` nunca muda de comportamento com base no ambiente.
 
 ## Criar e proteger a credencial
 
@@ -29,5 +29,4 @@ O provider real ainda nao esta implementado nem ativado. O proximo adapter sera 
 
 ## Validacao esperada na proxima rodada
 
-Depois que o secret estiver configurado, informe apenas que `GOOGLE_MAPS_API_KEY` esta disponivel; nao cole a chave no chat. A proxima etapa confirmara na documentacao de Text Search (New) os nomes atuais dos campos para place ID, display name, formatted address, Google Maps URI, primary type, rating, user rating count, website URI e national phone number antes de implementar o adapter.
-
+Depois que o secret estiver configurado, informe apenas que `GOOGLE_MAPS_API_KEY` esta disponivel; nao cole a chave no chat. Use `google_places_status` para confirmar a configuracao e siga o teste controlado em [Google Places discovery](google-places.md).

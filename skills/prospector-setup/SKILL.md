@@ -16,9 +16,8 @@ Configure somente a prospeccao operada por Oliver Queen. Leia `{baseDir}/../../c
 - pesos de scoring, que devem totalizar 100;
 - provider de discovery e provider de browser.
 
-O banco fica no `PLUGIN_DATA` fornecido pelo OpenClaw. Nunca grave dados operacionais dentro do plugin. A chave futura do Google deve vir do secret `GOOGLE_MAPS_API_KEY`; nunca coloque credenciais nesta Skill, no Git ou em logs.
+O banco fica no `PLUGIN_DATA` fornecido pelo OpenClaw. Nunca grave dados operacionais dentro do plugin. A chave do Google deve vir do secret `GOOGLE_MAPS_API_KEY`; nunca coloque credenciais nesta Skill, no Git ou em logs. Use `google_places_status` para verificar apenas se esta configurada.
 
-O provider inicial e `fake`. O browser esperado e Playwright disponibilizado pelo OpenClaw. Google Places real permanece desativado ate configuracao explicita da credencial.
+O provider fake continua disponivel para testes offline. `prospect_places` faz descoberta real via Places API (New), mas nao executa assessment nem persiste leads. O browser esperado para assessment manual e Playwright disponibilizado pelo OpenClaw.
 
 Nao configure dashboard, hospedagem, Gmail, Drive, propostas, contratos, financeiro ou envio de mensagens.
-

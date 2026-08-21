@@ -9,6 +9,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from business_prospector.application.config import ProspectingConfig
+from business_prospector.application.ports import SearchQuery
 from business_prospector.application.prospecting import ProspectingService
 from business_prospector.domain.exceptions import ProspectorError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
@@ -17,6 +18,7 @@ from business_prospector.infrastructure.fake_providers import (
     FakeBusinessDiscoveryProvider,
     FakeWebsiteAssessmentProvider,
 )
+from business_prospector.infrastructure.google_places import GooglePlacesBusinessDiscoveryProvider
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
 
 LOGGER = logging.getLogger("business_prospector.mcp")
@@ -195,6 +197,34 @@ def prospect_fake(niche: str, city: str) -> dict[str, Any]:
     except (ProspectorError, ValueError, OSError, KeyError, sqlite3.Error) as exc:
         LOGGER.warning("prospect_fake failed: %s", exc)
         return _response("prospect_fake", error=str(exc))
+
+
+@mcp.tool()
+def google_places_status() -> dict[str, Any]:
+    """Report whether Google Places is configured without exposing its API key."""
+    return _response(
+        "google_places_status",
+        {"google_places_configured": GooglePlacesBusinessDiscoveryProvider().configured},
+    )
+
+
+@mcp.tool()
+def prospect_places(niche: str, city: str, limit: int = 10) -> dict[str, Any]:
+    """Run one bounded Places API (New) discovery; website assessment is not performed."""
+    try:
+        safe_limit = max(1, min(limit, 25))
+        candidates = GooglePlacesBusinessDiscoveryProvider().search(
+            SearchQuery(niche=niche, city=city, limit=safe_limit)
+        )
+        return _response("prospect_places", {
+            "candidates": [candidate.to_dict() for candidate in candidates],
+            "count": len(candidates),
+            "website_assessment": "not_run",
+            "leads_saved": 0,
+        })
+    except (ProspectorError, ValueError, OSError) as exc:
+        LOGGER.warning("prospect_places failed: %s", exc)
+        return _response("prospect_places", error=str(exc))
 
 
 def main() -> None:
