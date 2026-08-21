@@ -8,7 +8,8 @@ from typing import Any
 from business_prospector.application.ports import DuplicateMatch
 from business_prospector.domain.exceptions import LeadNotFoundError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
-from business_prospector.domain.normalization import normalize_address, normalize_domain, normalize_phone, normalize_text
+from business_prospector.domain.identity import identity_domain
+from business_prospector.domain.normalization import normalize_address, normalize_phone, normalize_text
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.domain.first_website import FirstWebsiteMarketReport
 
@@ -200,7 +201,7 @@ class SQLiteLeadRepository:
 
     def find_duplicate(self, candidate: BusinessCandidate | Lead) -> DuplicateMatch | None:
         external_id = candidate.external_place_id
-        domain = normalize_domain(candidate.website_url)
+        domain = identity_domain(candidate)
         phone = normalize_phone(candidate.whatsapp or candidate.phone)
         name = normalize_text(candidate.name)
         city = normalize_text(candidate.city)
@@ -210,23 +211,28 @@ class SQLiteLeadRepository:
             ("normalized_domain", domain, "likely"),
             ("normalized_phone", phone, "likely"),
         )
+        fallback_scope = "" if not external_id else " AND external_place_id IS NULL"
         with self._connect() as connection:
             for column, value, confidence in checks:
                 if value:
-                    row = connection.execute(f"SELECT id FROM leads WHERE {column} = ? LIMIT 1", (value,)).fetchone()
+                    scope = "" if column == "external_place_id" else fallback_scope
+                    row = connection.execute(
+                        f"SELECT id FROM leads WHERE {column} = ?{scope} LIMIT 1", (value,)
+                    ).fetchone()
                     if row:
                         return DuplicateMatch(int(row["id"]), column, confidence)
+            if address:
+                row = connection.execute(
+                    f"SELECT id FROM leads WHERE normalized_address = ?{fallback_scope} LIMIT 1", (address,)
+                ).fetchone()
+                if row:
+                    return DuplicateMatch(int(row["id"]), "normalized_address", "likely")
             row = connection.execute(
-                "SELECT id FROM leads WHERE normalized_name = ? AND normalized_city = ? LIMIT 1", (name, city)
+                f"SELECT id FROM leads WHERE normalized_name = ? AND normalized_city = ?{fallback_scope} LIMIT 1",
+                (name, city),
             ).fetchone()
             if row:
                 return DuplicateMatch(int(row["id"]), "normalized_name_city", "possible")
-            if address:
-                row = connection.execute(
-                    "SELECT id FROM leads WHERE normalized_address = ? LIMIT 1", (address,)
-                ).fetchone()
-                if row:
-                    return DuplicateMatch(int(row["id"]), "normalized_address", "possible")
         return None
 
     @staticmethod

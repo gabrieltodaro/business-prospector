@@ -51,6 +51,45 @@ def test_layered_deduplication(
     assert (match.match_type, match.confidence) == (match_type, confidence)
 
 
+@pytest.mark.parametrize("fallback", ["domain", "phone", "name_city", "address"])
+def test_different_stable_place_ids_are_not_repository_duplicates(
+    repository: SQLiteLeadRepository, fallback: str,
+) -> None:
+    original = lead()
+    original.external_place_id = "place-A"
+    original.address = "Rua Brasil, 10"
+    repository.save(original)
+    values: dict[str, object] = {
+        "name": "Other", "city": "Other", "website_url": "https://other.example",
+        "phone": "5517888888888", "address": "Rua Other, 20",
+    }
+    if fallback == "domain":
+        values["website_url"] = "https://example.com/path"
+    elif fallback == "phone":
+        values["phone"] = "5517999991234"
+    elif fallback == "name_city":
+        values.update(name="Clinica Teste", city="Catanduva")
+    else:
+        values["address"] = "RUA BRASIL, 10"
+    candidate = BusinessCandidate(
+        category="dentista", rating=5, review_count=1, external_place_id="place-B", **values,
+    )
+    assert repository.find_duplicate(candidate) is None
+
+
+def test_repository_fallback_matches_record_without_stable_place_id(
+    repository: SQLiteLeadRepository,
+) -> None:
+    repository.save(lead())
+    candidate = BusinessCandidate(
+        "Other", "dentista", "Other", 5, 1,
+        website_url="https://example.com/path", external_place_id="place-B",
+    )
+    match = repository.find_duplicate(candidate)
+    assert match is not None
+    assert match.match_type == "normalized_domain"
+
+
 def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
     database = tmp_path / "migration.db"
     repository = SQLiteLeadRepository(database)

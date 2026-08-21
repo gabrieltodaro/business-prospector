@@ -80,6 +80,54 @@ def test_competitor_selection_is_relevant_unique_and_bounded(tmp_path: Path) -> 
         "target_business", "duplicate", "social_only", "category_mismatch",
         "max_competitors_reached",
     ]
+    assert selection.rejected[0].to_dict()["match"] == {
+        "rule": "external_place_id", "strength": "exact", "matched_against": "target",
+    }
+    assert selection.rejected[1].to_dict()["match"] == {
+        "rule": "external_place_id", "strength": "exact", "matched_against": "competitor_pool",
+    }
+
+
+def test_distinct_place_ids_on_shared_instagram_host_are_not_identity_matches(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    selection = prospecting.select_competitors(
+        candidate(
+            name="Dra. Gabrielhe Ferreira", external_place_id="place-target",
+            website_url="https://instagram.com/gabrielhe",
+        ),
+        [
+            candidate(name="Dra. Larissa Ferreira", external_place_id="place-larissa", website_url="https://instagram.com/larissa"),
+            candidate(name="Dr. Mateus Shiya", external_place_id="place-mateus", website_url="https://instagram.com/mateus"),
+            candidate(name="Dra. Carolina Oliveira", external_place_id="place-carolina", website_url="https://instagram.com/carolina"),
+        ],
+    )
+    assert [item.reason for item in selection.rejected] == ["social_only"] * 3
+    assert all(item.match is None for item in selection.rejected)
+
+
+def test_pool_fallback_duplicate_reports_rule_when_place_ids_are_missing(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    selection = prospecting.select_competitors(candidate(), [
+        candidate(name="First", external_place_id=None, phone=None, website_url="https://clinic.example/one"),
+        candidate(name="Second", external_place_id=None, phone=None, website_url="https://clinic.example/two"),
+    ])
+    assert [item.name for item in selection.selected] == ["First"]
+    assert selection.rejected[0].to_dict()["match"] == {
+        "rule": "normalized_domain", "strength": "strong", "matched_against": "competitor_pool",
+    }
+
+
+def test_target_fallback_is_allowed_when_place_id_is_missing(tmp_path: Path) -> None:
+    prospecting, _ = service(tmp_path)
+    selection = prospecting.select_competitors(
+        candidate(external_place_id=None, phone="17999999999"),
+        [candidate(name="Target fallback", external_place_id="candidate-id", phone="5517999999999",
+                   website_url="https://candidate.example")],
+    )
+    assert selection.selected == ()
+    assert selection.rejected[0].to_dict()["match"] == {
+        "rule": "normalized_phone", "strength": "strong", "matched_against": "target",
+    }
 
 
 def test_competitor_selection_reports_every_rejection_and_summary(tmp_path: Path) -> None:

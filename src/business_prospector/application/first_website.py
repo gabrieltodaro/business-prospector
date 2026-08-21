@@ -10,8 +10,9 @@ from business_prospector.domain.first_website import (
     FirstWebsiteMarketReport,
     is_first_website_candidate,
 )
+from business_prospector.domain.identity import IdentityMatch, match_business_identity
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
-from business_prospector.domain.normalization import normalize_domain, normalize_text
+from business_prospector.domain.normalization import normalize_text
 from business_prospector.domain.scoring import calculate_first_website_score
 from business_prospector.domain.website_presence import WebsitePresence, classify_website_presence
 
@@ -44,9 +45,14 @@ class FirstWebsiteOutcome:
 class CompetitorRejection:
     candidate: dict[str, Any]
     reason: str
+    match: IdentityMatch | None = None
+    matched_against: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"candidate": self.candidate, "reason": self.reason}
+        data = {"candidate": self.candidate, "reason": self.reason}
+        if self.match and self.matched_against:
+            data["match"] = self.match.to_dict(self.matched_against)
+        return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,16 +85,6 @@ def _categories_are_compatible(
     return any(normalized <= {normalize_text(item) for item in group} for group in groups)
 
 
-def _candidate_identities(item: BusinessCandidate) -> set[str]:
-    identities = {f"name_city:{normalize_text(item.name)}:{normalize_text(item.city)}"}
-    if item.external_place_id:
-        identities.add(f"place:{item.external_place_id}")
-    domain = normalize_domain(item.website_url)
-    if domain:
-        identities.add(f"domain:{domain}")
-    return identities
-
-
 def _invalid_candidate_snapshot(raw: object, index: int) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {"candidate_index": index}
@@ -113,7 +109,7 @@ class FirstWebsiteProspectingService:
             raise ValidationError("maximum competitors must be positive")
         selected: list[BusinessCandidate] = []
         rejected: list[CompetitorRejection] = []
-        seen: set[str] = set()
+        seen: list[BusinessCandidate] = []
         bounded = raw_candidates[: self._config.first_website.max_competitor_candidates]
         for index, raw in enumerate(bounded):
             try:
@@ -126,14 +122,23 @@ class FirstWebsiteProspectingService:
                           else "invalid_candidate")
                 rejected.append(CompetitorRejection(snapshot, reason))
                 continue
-            identities = _candidate_identities(item)
-            if identities & _candidate_identities(target):
-                rejected.append(CompetitorRejection(item.to_dict(), "target_business"))
+            target_match = match_business_identity(item, target)
+            if target_match:
+                rejected.append(CompetitorRejection(
+                    item.to_dict(), "target_business", target_match, "target",
+                ))
                 continue
-            if identities & seen:
-                rejected.append(CompetitorRejection(item.to_dict(), "duplicate"))
+            pool_match = None
+            for previous in seen:
+                pool_match = match_business_identity(item, previous)
+                if pool_match:
+                    break
+            if pool_match:
+                rejected.append(CompetitorRejection(
+                    item.to_dict(), "duplicate", pool_match, "competitor_pool",
+                ))
                 continue
-            seen.update(identities)
+            seen.append(item)
             if not _categories_are_compatible(
                 item.category, target.category, self._config.first_website.compatible_category_groups,
             ):

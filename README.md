@@ -106,6 +106,10 @@ O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Ski
 
 No formato Agent Plugins, o OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` ao iniciar o MCP. No fallback 2026.7.1, expande `${CLAUDE_PLUGIN_ROOT}`. Nenhum path absoluto do autor ou de Windows e necessario.
 
+### Identidade de empresas
+
+Google Place ID tem precedencia sobre identificadores derivados. Dois registros com Place IDs nao vazios e diferentes representam Places distintos e nunca sao unidos por dominio, telefone, endereco ou nome+cidade. Esses fallbacks sao usados somente quando pelo menos um registro nao possui Place ID. Dominios compartilhados de redes sociais e perfis de terceiros nao sao identificadores de empresa. A selecao de concorrentes separa correspondencia com o alvo, duplicata dentro do pool e duplicata ja persistida.
+
 Documentacao oficial usada para o bundle:
 
 - [OpenClaw plugin bundles](https://docs.openclaw.ai/plugins/bundles)

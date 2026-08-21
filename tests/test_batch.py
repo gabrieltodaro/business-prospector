@@ -124,8 +124,8 @@ def test_prepare_detects_place_id_and_fallback_duplicates(tmp_path: Path) -> Non
         candidate(name="Other", website_url="https://other.example", external_place_id="place-real"),
         candidate(name="Domain duplicate", external_place_id="other-place"),
     ])
-    assert [item["match_type"] for item in result.duplicates] == ["external_place_id", "normalized_domain"]
-    assert result.website_candidates == []
+    assert [item["match_type"] for item in result.duplicates] == ["external_place_id"]
+    assert [item.name for item in result.website_candidates] == ["Domain duplicate"]
 
 
 def test_qualify_save_persists_score_batch_and_structured_evidence(tmp_path: Path) -> None:
