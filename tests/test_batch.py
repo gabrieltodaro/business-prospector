@@ -97,6 +97,26 @@ def test_social_only_candidate_never_enters_website_assessment_work(tmp_path: Pa
     assert result.deferred_first_website[0].reason == "social_only"
 
 
+def test_explicit_batch_modes_keep_work_separate(tmp_path: Path) -> None:
+    batch, _ = service(tmp_path)
+    raw = [candidate(), candidate(name="No site", external_place_id="no-site", website_url=None)]
+    redesign = batch.prepare(raw, mode="redesign")
+    first = batch.prepare(raw, mode="first_website")
+    both = batch.prepare(raw, mode="both")
+    assert (len(redesign.website_candidates), len(redesign.first_website_candidates)) == (1, 0)
+    assert (len(first.website_candidates), len(first.first_website_candidates)) == (0, 1)
+    assert (len(both.website_candidates), len(both.first_website_candidates)) == (1, 1)
+
+
+def test_first_website_mode_respects_max_candidates(tmp_path: Path) -> None:
+    batch, _ = service(tmp_path)
+    result = batch.prepare([
+        candidate(name=f"No site {index}", external_place_id=f"no-{index}", website_url=None)
+        for index in range(4)
+    ], mode="first_website", max_candidates=2)
+    assert len(result.first_website_candidates) == 2
+
+
 def test_prepare_detects_place_id_and_fallback_duplicates(tmp_path: Path) -> None:
     batch, repository = service(tmp_path)
     repository.save(existing_lead(candidate()))

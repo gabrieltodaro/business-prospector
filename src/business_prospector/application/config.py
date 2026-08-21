@@ -5,7 +5,28 @@ from dataclasses import dataclass, field
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
-from business_prospector.domain.scoring import ScoreWeights
+from business_prospector.domain.scoring import FirstWebsiteScoreWeights, ScoreWeights
+
+
+@dataclass(frozen=True, slots=True)
+class FirstWebsitePolicy:
+    minimum_rating: float = 3.5
+    minimum_reviews: int = 20
+    minimum_score: int = 55
+    minimum_competitors: int = 2
+    max_competitors: int = 3
+    max_competitor_candidates: int = 10
+    scoring: FirstWebsiteScoreWeights = FirstWebsiteScoreWeights()
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.minimum_rating <= 5 or self.minimum_reviews < 0:
+            raise ValueError("invalid first website reputation policy")
+        if not 0 <= self.minimum_score <= 100:
+            raise ValueError("invalid first website minimum score")
+        if not 1 <= self.minimum_competitors <= self.max_competitors <= 3:
+            raise ValueError("first website competitor limits must be between 1 and 3")
+        if not self.max_competitors <= self.max_competitor_candidates <= 25:
+            raise ValueError("invalid first website competitor candidate limit")
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +38,7 @@ class ProspectingConfig:
     minimum_website_issues: int = 2
     cities: tuple[str, ...] = field(default_factory=tuple)
     scoring: ScoreWeights = ScoreWeights()
+    first_website: FirstWebsitePolicy = FirstWebsitePolicy()
     discovery_provider: str = "fake"
     browser_provider: str = "openclaw-playwright"
 
@@ -40,5 +62,8 @@ class ProspectingConfig:
     def from_resource(cls, resource: Traversable) -> "ProspectingConfig":
         raw = json.loads(resource.read_text(encoding="utf-8"))
         scoring = ScoreWeights(**raw.pop("scoring", {}))
+        first_raw = raw.pop("first_website", {})
+        first_scoring = FirstWebsiteScoreWeights(**first_raw.pop("scoring", {}))
+        first_website = FirstWebsitePolicy(scoring=first_scoring, **first_raw)
         raw["cities"] = tuple(raw.get("cities", ()))
-        return cls(scoring=scoring, **raw)
+        return cls(scoring=scoring, first_website=first_website, **raw)

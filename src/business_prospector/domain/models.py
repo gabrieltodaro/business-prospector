@@ -29,6 +29,7 @@ PIPELINE_STATUSES = (
 # `discarded`, which describes a commercial pipeline decision more accurately.
 VALID_STATUSES = set(PIPELINE_STATUSES) | {"rejected"}
 VALID_WHATSAPP_SOURCES = {"website_link", "google_business_phone", "manual", "unknown"}
+OPPORTUNITY_TYPES = {"redesign", "first_website"}
 ASSESSMENT_PERSISTENCE_STATUSES = {
     "assessed", "unavailable", "blocked", "timeout", "insufficient_evidence", "error",
 }
@@ -130,6 +131,11 @@ class Lead:
     assessment_status: str | None = None
     assessment_checked_at: str | None = None
     batch_id: str | None = None
+    opportunity_type: str = "redesign"
+    first_website_reason: str | None = None
+    market_research: dict[str, Any] | None = None
+    market_research_status: str | None = None
+    market_research_checked_at: str | None = None
     discovered_at: str = field(default_factory=utc_now)
     last_checked_at: str = field(default_factory=utc_now)
     id: int | None = None
@@ -161,6 +167,14 @@ class Lead:
             raise ValidationError("structured assessment requires status and checked_at")
         if self.batch_id is not None and (not self.batch_id.strip() or len(self.batch_id) > 100):
             raise ValidationError("batch_id must be a non-empty string up to 100 characters")
+        if self.opportunity_type not in OPPORTUNITY_TYPES:
+            raise ValidationError("invalid opportunity_type")
+        if self.opportunity_type == "first_website" and not self.first_website_reason:
+            raise ValidationError("first website opportunity requires a reason")
+        if self.market_research is not None and (
+            self.market_research_status is None or self.market_research_checked_at is None
+        ):
+            raise ValidationError("market research requires status and checked_at")
         validate_http_url(self.website_url, "website_url")
         validate_http_url(self.maps_url, "maps_url")
         validate_http_url(self.instagram, "instagram")

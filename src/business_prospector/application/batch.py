@@ -15,9 +15,6 @@ from .ports import DuplicateMatch, LeadRepository
 from .prospecting import ProspectingService
 
 
-FIRST_WEBSITE_MINIMUM_RATING = 3.5
-
-
 @dataclass(slots=True)
 class DeferredFirstWebsite:
     candidate: BusinessCandidate
@@ -32,7 +29,9 @@ class BatchPreparation:
     batch_id: str
     target_qualified_leads: int
     max_candidates: int
+    mode: str
     website_candidates: list[BusinessCandidate] = field(default_factory=list)
+    first_website_candidates: list[DeferredFirstWebsite] = field(default_factory=list)
     deferred_first_website: list[DeferredFirstWebsite] = field(default_factory=list)
     rejected_reputation: list[BusinessCandidate] = field(default_factory=list)
     duplicates: list[dict[str, Any]] = field(default_factory=list)
@@ -41,6 +40,7 @@ class BatchPreparation:
     def to_dict(self) -> dict[str, Any]:
         groups = {
             "website_candidates": [item.to_dict() for item in self.website_candidates],
+            "first_website_candidates": [item.to_dict() for item in self.first_website_candidates],
             "deferred_first_website": [item.to_dict() for item in self.deferred_first_website],
             "rejected_reputation": [item.to_dict() for item in self.rejected_reputation],
             "duplicates": self.duplicates,
@@ -50,6 +50,7 @@ class BatchPreparation:
             "batch_id": self.batch_id,
             "target_qualified_leads": self.target_qualified_leads,
             "max_candidates": self.max_candidates,
+            "mode": self.mode,
             **groups,
             "summary": {name: len(items) for name, items in groups.items()},
         }
@@ -90,6 +91,7 @@ class BatchProspectingService:
         batch_id: str | None = None,
         target_qualified_leads: int | None = None,
         max_candidates: int | None = None,
+        mode: str = "redesign",
     ) -> BatchPreparation:
         target = target_qualified_leads or self._config.target_leads
         maximum = max_candidates or self._config.max_businesses
@@ -97,10 +99,13 @@ class BatchProspectingService:
             raise ValidationError("target_qualified_leads is outside configured bounds")
         if not 1 <= maximum <= self._config.max_businesses:
             raise ValidationError("max_candidates is outside configured bounds")
+        if mode not in {"redesign", "first_website", "both"}:
+            raise ValidationError("mode must be redesign, first_website or both")
         result = BatchPreparation(
             batch_id=batch_id or self.new_batch_id(),
             target_qualified_leads=target,
             max_candidates=maximum,
+            mode=mode,
         )
         for index, raw in enumerate(raw_candidates[:maximum]):
             try:
@@ -108,7 +113,7 @@ class BatchProspectingService:
             except (ProspectorError, TypeError, ValueError) as exc:
                 result.invalid.append({"index": index, "reason": str(exc)})
                 continue
-            if candidate.rating < FIRST_WEBSITE_MINIMUM_RATING:
+            if candidate.rating < self._config.first_website.minimum_rating:
                 result.rejected_reputation.append(candidate)
                 continue
             duplicate = self._repository.find_duplicate(candidate)
@@ -129,9 +134,17 @@ class BatchProspectingService:
                 WebsitePresence.SOCIAL_ONLY,
                 WebsitePresence.THIRD_PARTY_PROFILE,
             }:
-                result.deferred_first_website.append(
-                    DeferredFirstWebsite(candidate, presence.presence.value)
+                deferred = DeferredFirstWebsite(candidate, presence.presence.value)
+                eligible = (
+                    candidate.rating >= self._config.first_website.minimum_rating
+                    and candidate.review_count >= self._config.first_website.minimum_reviews
                 )
+                if mode in {"first_website", "both"} and eligible:
+                    result.first_website_candidates.append(deferred)
+                elif mode == "redesign":
+                    result.deferred_first_website.append(deferred)
+                else:
+                    result.rejected_reputation.append(candidate)
                 continue
             if (
                 candidate.rating < self._config.minimum_rating
@@ -139,7 +152,8 @@ class BatchProspectingService:
             ):
                 result.rejected_reputation.append(candidate)
                 continue
-            result.website_candidates.append(candidate)
+            if mode in {"redesign", "both"}:
+                result.website_candidates.append(candidate)
         return result
 
     def qualify_and_save(

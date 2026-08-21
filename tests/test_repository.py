@@ -64,7 +64,7 @@ def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
     assert updated.name == original.name
     assert updated.status == "proposal"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(leads)")}
     assert "ix_leads_name_city" in indexes
 
@@ -86,3 +86,24 @@ def test_schema_v2_adds_evidence_columns_and_preserves_legacy_rows(tmp_path: Pat
     assert migrated.name == "Legacy"
     assert migrated.website_assessment is None
     assert migrated.batch_id is None
+
+
+def test_schema_v3_defaults_existing_leads_to_redesign(tmp_path: Path) -> None:
+    database = tmp_path / "v3.db"
+    repository = SQLiteLeadRepository(database)
+    original = repository.save(lead("Existing redesign"))
+    from business_prospector.infrastructure.sqlite_repository import LEAD_COLUMNS
+    v3_columns = LEAD_COLUMNS + (
+        "website_assessment_json", "assessment_status", "assessment_checked_at", "batch_id",
+    )
+    columns = ", ".join(v3_columns)
+    with sqlite3.connect(database) as connection:
+        connection.execute(f"CREATE TABLE leads_v3 AS SELECT {columns} FROM leads")
+        connection.execute("DROP TABLE leads")
+        connection.execute("ALTER TABLE leads_v3 RENAME TO leads")
+        connection.execute("PRAGMA user_version = 3")
+
+    migrated = SQLiteLeadRepository(database).get(original.id or 0)
+    assert migrated is not None
+    assert migrated.opportunity_type == "redesign"
+    assert migrated.market_research is None

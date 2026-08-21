@@ -21,6 +21,20 @@
     "website_opportunity": 40,
     "contactability": 20
   },
+  "first_website": {
+    "minimum_rating": 3.5,
+    "minimum_reviews": 20,
+    "minimum_score": 55,
+    "minimum_competitors": 2,
+    "max_competitors": 3,
+    "max_competitor_candidates": 10,
+    "scoring": {
+      "business_quality": 40,
+      "digital_presence_gap": 30,
+      "contactability": 15,
+      "market_opportunity": 15
+    }
+  },
   "discovery_provider": "fake",
   "browser_provider": "openclaw-playwright"
 }

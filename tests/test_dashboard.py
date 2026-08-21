@@ -171,3 +171,6 @@ def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     assert "calculate_score" not in source
     assert "website_assessment" in source
     assert "(criterion.facts||[]).join" in source
+    assert "Primeiro Site" in source
+    assert "opportunity_type" in source
+    assert "market_research" in source

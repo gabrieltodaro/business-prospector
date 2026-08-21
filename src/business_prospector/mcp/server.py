@@ -11,11 +11,14 @@ from mcp.server.fastmcp import FastMCP
 
 from business_prospector.application.config import ProspectingConfig
 from business_prospector.application.batch import BatchProspectingService
+from business_prospector.application.first_website import FirstWebsiteProspectingService
 from business_prospector.application.ports import SearchQuery
 from business_prospector.application.prospecting import ProspectingService
 from business_prospector.domain.exceptions import ProspectorError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
 from business_prospector.domain.scoring import calculate_score
+from business_prospector.domain.scoring import calculate_first_website_score
+from business_prospector.domain.first_website import FirstWebsiteMarketReport
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.infrastructure.fake_providers import (
     FakeBusinessDiscoveryProvider,
@@ -174,7 +177,21 @@ def update_lead(
         changes = {key: value for key, value in locals().items() if key != "lead_id" and value is not None}
         repository = _repository()
         lead = repository.update(lead_id, changes)
-        lead.score = calculate_score(lead, ProspectingConfig.from_resource(_config_resource()).scoring).total
+        config = ProspectingConfig.from_resource(_config_resource())
+        if lead.opportunity_type == "first_website" and lead.market_research is not None:
+            candidate = BusinessCandidate(
+                name=lead.name, category=lead.category, city=lead.city, rating=lead.rating,
+                review_count=lead.review_count, website_url=lead.website_url or None,
+                external_place_id=lead.external_place_id, address=lead.address, maps_url=lead.maps_url,
+                phone=lead.phone, whatsapp=lead.whatsapp, whatsapp_confirmed=lead.whatsapp_confirmed,
+                whatsapp_source=lead.whatsapp_source, email=lead.email, instagram=lead.instagram,
+                source=lead.source,
+            )
+            lead.score = calculate_first_website_score(
+                candidate, FirstWebsiteMarketReport.from_dict(lead.market_research), config.first_website.scoring,
+            ).total
+        else:
+            lead.score = calculate_score(lead, config.scoring).total
         lead = repository.update(lead_id, {"score": lead.score})
         return _response("update_lead", lead.to_dict())
     except (ProspectorError, ValueError, OSError, sqlite3.Error) as exc:
@@ -233,6 +250,7 @@ def prepare_batch_candidates(
     target_qualified_leads: int = 10,
     max_candidates: int = 25,
     batch_id: str = "",
+    mode: str = "redesign",
 ) -> dict[str, Any]:
     """Deterministically prefilter one bounded Places result before any browser work."""
     try:
@@ -244,6 +262,7 @@ def prepare_batch_candidates(
             batch_id=batch_id or None,
             target_qualified_leads=target_qualified_leads,
             max_candidates=max_candidates,
+            mode=mode,
         )
         return _response("prepare_batch_candidates", prepared.to_dict())
     except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
@@ -268,6 +287,50 @@ def qualify_and_save_candidate(
     except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         LOGGER.warning("qualify_and_save_candidate failed: %s", exc)
         return _response("qualify_and_save_candidate", error=str(exc))
+
+
+@mcp.tool()
+def select_first_website_competitors(
+    target: dict[str, Any], candidates: list[dict[str, Any]], max_competitors: int = 2,
+) -> dict[str, Any]:
+    """Select a bounded comparable set with real websites for first-website research."""
+    try:
+        service = FirstWebsiteProspectingService(
+            _repository(), ProspectingConfig.from_resource(_config_resource())
+        )
+        selected = service.select_competitors(target, candidates, max_competitors)
+        return _response("select_first_website_competitors", {
+            "competitors": [item.to_dict() for item in selected], "count": len(selected),
+        })
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("select_first_website_competitors", error=str(exc))
+
+
+@mcp.tool()
+def validate_first_website_market_research(research: dict[str, Any]) -> dict[str, Any]:
+    """Validate bounded competitor facts, inferences and recommendations without browsing."""
+    try:
+        from business_prospector.domain.first_website import FirstWebsiteMarketReport
+        report = FirstWebsiteMarketReport.from_dict(research)
+        return _response("validate_first_website_market_research", {"report": report.to_dict()})
+    except (ProspectorError, TypeError, ValueError) as exc:
+        return _response("validate_first_website_market_research", error=str(exc))
+
+
+@mcp.tool()
+def qualify_and_save_first_website_candidate(
+    candidate: dict[str, Any], research: dict[str, Any], batch_id: str,
+    contacts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Deterministically score and save one qualified first-website opportunity."""
+    try:
+        service = FirstWebsiteProspectingService(
+            _repository(), ProspectingConfig.from_resource(_config_resource())
+        )
+        outcome = service.qualify_and_save(candidate, research, batch_id, contacts)
+        return _response("qualify_and_save_first_website_candidate", outcome.to_dict())
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("qualify_and_save_first_website_candidate", error=str(exc))
 
 
 @mcp.tool()

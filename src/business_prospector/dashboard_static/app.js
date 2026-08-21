@@ -69,6 +69,7 @@ function makeCard(lead) {
   const card=node('article','lead-card'); card.draggable=true; card.dataset.id=lead.id; card.style.setProperty('--status-color',colors[visualStatus(lead.status)]||colors.qualified);
   const top=node('div','card-top'); top.append(node('div','card-name',lead.name),node('span','score',lead.score));
   card.append(top,node('p','card-meta',`${lead.category} · ${lead.city}`));
+  card.append(node('span',`opportunity-badge ${lead.opportunity_type==='first_website'?'first':''}`,lead.opportunity_type==='first_website'?'Primeiro Site':'Redesign'));
   const quality=node('div','quality'); quality.append(node('span','rating',`★ ${Number(lead.rating).toFixed(1)}`),node('span','',`${lead.review_count} avaliações`)); card.append(quality);
   card.append(node('p','reason',lead.assessment?.reason||'Sem justificativa registrada'));
   const indicators=node('div','indicators');
@@ -96,6 +97,14 @@ function openDetail(lead) {
     Object.entries(lead.website_assessment.criteria).forEach(([name,criterion])=>{
       evidence.append(detailSection(name,[['Outcome',criterion.outcome],['Facts',(criterion.facts||[]).join(' · ')||'—'],['Inference',criterion.inference||'—']]));
     });content.append(evidence);
+  }
+  if(lead.opportunity_type==='first_website'&&lead.market_research){
+    const research=lead.market_research;
+    content.append(detailSection('Pesquisa de mercado',[
+      ['Tipo','Primeiro Site'],['Motivo',lead.first_website_reason],['Concorrentes',research.competitors?.length||0],
+      ['Confiança',research.confidence],['Features comuns',(research.common_features||[]).map(item=>`${item.feature}: ${item.observed_in}/${item.total}`).join(' · ')],
+      ['Inferências',(research.inferences||[]).join(' · ')],['Recomendações',(research.recommendations||[]).join(' · ')]
+    ]));
   }
   content.append(detailSection('Contatos', [['Telefone',lead.phone],['WhatsApp',lead.whatsapp],['Confirmado',lead.whatsapp_confirmed?'Sim':'Não'],['Fonte WhatsApp',lead.whatsapp_source],['E-mail',lead.email],['Instagram',externalLink(lead.instagram,'Abrir Instagram')]]));
   content.append(detailSection('Prospecção', [['Score',lead.score],['Status',labels[visualStatus(lead.status)]||lead.status],['Batch',lead.batch_id],['Fonte',lead.source],['Descoberto em',lead.discovered_at],['Última verificação',lead.last_checked_at]]));

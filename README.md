@@ -159,6 +159,8 @@ Contrato, criterios, seguranca, estados de falha e o TODO do futuro pipeline par
 
 Oliver orquestra uma descoberta Places limitada, prefiltragem deterministica, assessments Playwright sequenciais e qualificacao/salvamento por candidato. Python controla filtros, duplicatas, thresholds e score; leads qualificados chegam ao Kanban pelo mesmo SQLite. Arquitetura, outcomes, evidencia persistida, limites e validacao controlada estao em [Batch real de prospeccao](docs/real-batch.md).
 
+O fluxo separado de [oportunidades de primeiro site](docs/first-website.md) pesquisa ate 2–3 concorrentes comparaveis, valida facts/inferences/recommendations e usa score proprio. `opportunity_type` distingue `redesign` de `first_website`; ambos compartilham identidade, SQLite, Kanban e os mesmos status comerciais.
+
 ## Seguranca
 
 - secrets e bancos locais sao ignorados pelo Git;
