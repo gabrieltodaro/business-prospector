@@ -21,7 +21,16 @@ O default configurado e target 10 e maximo 25 candidatos. A descoberta e limitad
 
 Resultados individuais: `saved_qualified`, `not_qualified_website`, `duplicate`, `assessment_failed`, `assessment_insufficient`, `deferred_first_website` e `invalid`. Uma falha individual nao aborta os demais. Falhas sistemicas de Places, Playwright, MCP ou seguranca encerram o batch.
 
-Empresas sem website e rating >= 3.5 entram em `deferred_first_website`, nao visitam Playwright e nao sao salvas como redesign. Rating abaixo de 3.5 fica em rejeicao de reputacao. O futuro fluxo de primeiro website, concorrentes e estrategia do zero permanece fora do escopo.
+Antes do Playwright, Python classifica a presenca web pelo hostname parseado, sem substring de URL:
+
+- `own_website`: dominio proprio e utilizavel;
+- `hosted_website`: experiencia real hospedada em plataforma, como Netlify, Vercel, Wix ou WordPress;
+- `no_website`: nenhum URL retornado;
+- `social_only`: perfil em Instagram, Facebook, TikTok, LinkedIn, YouTube ou X/Twitter;
+- `third_party_profile`: bio-link/profile aggregator, como Linktree;
+- `invalid_url`: URL malformada ou com protocolo nao permitido.
+
+Somente `own_website` e `hosted_website` entram no redesign/Playwright. `no_website`, `social_only` e `third_party_profile`, com rating >= 3.5, entram em `deferred_first_website` com motivo explicito, nao visitam Playwright e nao sao salvos como redesign. Rating abaixo de 3.5 fica em rejeicao de reputacao. O futuro fluxo de primeiro website, concorrentes e estrategia do zero permanece fora do escopo. A classificacao usa `urllib.parse`, conforme a [documentacao oficial](https://docs.python.org/3/library/urllib.parse.html).
 
 ## Evidencia e persistencia
 

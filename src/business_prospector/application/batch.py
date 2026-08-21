@@ -8,6 +8,7 @@ from business_prospector.domain.exceptions import ProspectorError, ValidationErr
 from business_prospector.domain.models import BusinessCandidate, Lead, utc_now
 from business_prospector.domain.scoring import calculate_score
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
+from business_prospector.domain.website_presence import WebsitePresence, classify_website_presence
 
 from .config import ProspectingConfig
 from .ports import DuplicateMatch, LeadRepository
@@ -18,12 +19,21 @@ FIRST_WEBSITE_MINIMUM_RATING = 3.5
 
 
 @dataclass(slots=True)
+class DeferredFirstWebsite:
+    candidate: BusinessCandidate
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"candidate": self.candidate.to_dict(), "reason": self.reason}
+
+
+@dataclass(slots=True)
 class BatchPreparation:
     batch_id: str
     target_qualified_leads: int
     max_candidates: int
     website_candidates: list[BusinessCandidate] = field(default_factory=list)
-    deferred_first_website: list[BusinessCandidate] = field(default_factory=list)
+    deferred_first_website: list[DeferredFirstWebsite] = field(default_factory=list)
     rejected_reputation: list[BusinessCandidate] = field(default_factory=list)
     duplicates: list[dict[str, Any]] = field(default_factory=list)
     invalid: list[dict[str, Any]] = field(default_factory=list)
@@ -98,16 +108,7 @@ class BatchProspectingService:
             except (ProspectorError, TypeError, ValueError) as exc:
                 result.invalid.append({"index": index, "reason": str(exc)})
                 continue
-            if not candidate.website_url:
-                if candidate.rating >= FIRST_WEBSITE_MINIMUM_RATING:
-                    result.deferred_first_website.append(candidate)
-                else:
-                    result.rejected_reputation.append(candidate)
-                continue
-            if (
-                candidate.rating < self._config.minimum_rating
-                or candidate.review_count < self._config.minimum_reviews
-            ):
+            if candidate.rating < FIRST_WEBSITE_MINIMUM_RATING:
                 result.rejected_reputation.append(candidate)
                 continue
             duplicate = self._repository.find_duplicate(candidate)
@@ -118,6 +119,25 @@ class BatchProspectingService:
                     "match_type": duplicate.match_type,
                     "confidence": duplicate.confidence,
                 })
+                continue
+            presence = classify_website_presence(candidate.website_url)
+            if presence.presence == WebsitePresence.INVALID_URL:
+                result.invalid.append({"index": index, "reason": "invalid website URL"})
+                continue
+            if presence.presence in {
+                WebsitePresence.NO_WEBSITE,
+                WebsitePresence.SOCIAL_ONLY,
+                WebsitePresence.THIRD_PARTY_PROFILE,
+            }:
+                result.deferred_first_website.append(
+                    DeferredFirstWebsite(candidate, presence.presence.value)
+                )
+                continue
+            if (
+                candidate.rating < self._config.minimum_rating
+                or candidate.review_count < self._config.minimum_reviews
+            ):
+                result.rejected_reputation.append(candidate)
                 continue
             result.website_candidates.append(candidate)
         return result
@@ -138,8 +158,15 @@ class BatchProspectingService:
             report = WebsiteAssessmentReport.from_dict(raw_report)
         except (ProspectorError, TypeError, ValueError) as exc:
             return QualificationOutcome("invalid", reason=str(exc))
-        if not candidate.website_url:
-            return QualificationOutcome("deferred_first_website", reason="candidate has no website")
+        presence = classify_website_presence(candidate.website_url)
+        if presence.presence in {
+            WebsitePresence.NO_WEBSITE,
+            WebsitePresence.SOCIAL_ONLY,
+            WebsitePresence.THIRD_PARTY_PROFILE,
+        }:
+            return QualificationOutcome("deferred_first_website", reason=presence.presence.value)
+        if presence.presence == WebsitePresence.INVALID_URL:
+            return QualificationOutcome("invalid", reason="invalid website URL")
         if report.status != "assessed":
             outcome = "assessment_insufficient" if report.status == "insufficient_evidence" else "assessment_failed"
             return QualificationOutcome(outcome, reason=report.failure_reason)

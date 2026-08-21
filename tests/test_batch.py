@@ -68,10 +68,33 @@ def test_prepare_classifies_reputation_websites_deferred_and_invalid(tmp_path: P
         {"name": "missing required fields"},
     ], target_qualified_leads=2, max_candidates=5)
     assert [item.name for item in result.website_candidates] == ["Clinica Real"]
-    assert [item.name for item in result.deferred_first_website] == ["Deferred"]
+    assert [(item.candidate.name, item.reason) for item in result.deferred_first_website] == [
+        ("Deferred", "no_website")
+    ]
     assert {item.name for item in result.rejected_reputation} == {"Low reviews", "Too low"}
     assert len(result.invalid) == 1
     assert result.target_qualified_leads == 2
+
+
+def test_prepare_defers_social_and_profile_urls_but_keeps_hosted_sites(tmp_path: Path) -> None:
+    batch, _ = service(tmp_path)
+    result = batch.prepare([
+        candidate(name="Instagram", external_place_id="ig", website_url="https://www.instagram.com/business/?igsh=x"),
+        candidate(name="Linktree", external_place_id="linktree", website_url="https://linktr.ee/business"),
+        candidate(name="Hosted", external_place_id="hosted", website_url="https://business.netlify.app"),
+    ])
+    assert [item.candidate.name for item in result.deferred_first_website] == ["Instagram", "Linktree"]
+    assert [item.reason for item in result.deferred_first_website] == ["social_only", "third_party_profile"]
+    assert [item.name for item in result.website_candidates] == ["Hosted"]
+
+
+def test_social_only_candidate_never_enters_website_assessment_work(tmp_path: Path) -> None:
+    batch, _ = service(tmp_path)
+    result = batch.prepare([
+        candidate(website_url="https://instagram.com/business", rating=5.0, review_count=196)
+    ])
+    assert result.website_candidates == []
+    assert result.deferred_first_website[0].reason == "social_only"
 
 
 def test_prepare_detects_place_id_and_fallback_duplicates(tmp_path: Path) -> None:
@@ -107,6 +130,10 @@ def test_qualification_outcomes_are_explicit(tmp_path: Path) -> None:
     assert batch.qualify_and_save(candidate(), report(unknown=True), "batch").outcome == "assessment_insufficient"
     assert batch.qualify_and_save(candidate(), report(status="timeout"), "batch").outcome == "assessment_failed"
     assert batch.qualify_and_save(candidate(website_url=None), report(), "batch").outcome == "deferred_first_website"
+    social = batch.qualify_and_save(
+        candidate(website_url="https://instagram.com/business"), report(), "batch"
+    )
+    assert (social.outcome, social.reason) == ("deferred_first_website", "social_only")
 
 
 def test_duplicate_recheck_makes_save_idempotent(tmp_path: Path) -> None:
