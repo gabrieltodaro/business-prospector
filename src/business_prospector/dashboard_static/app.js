@@ -2,7 +2,7 @@
 
 const STATUS = [
   ['new','Novo','#7a8ca8'],['qualified','Qualificado','#d66f4d'],['needs_review','Revisar','#a87525'],
-  ['contacted','Contatado','#688c94'],['proposal','Proposta','#8b6fa2'],['closed','Fechado','#547b5d'],['discarded','Descartado','#99948a']
+  ['site_ready','Site Pronto','#3f7f68'],['contacted','Contatado','#688c94'],['proposal','Proposta','#8b6fa2'],['closed','Fechado','#547b5d'],['discarded','Descartado','#99948a']
 ];
 const labels = Object.fromEntries(STATUS.map(([key,label]) => [key,label]));
 const colors = Object.fromEntries(STATUS.map(([key,,color]) => [key,color]));
@@ -76,6 +76,7 @@ function makeCard(lead) {
   addIndicator(indicators,'WhatsApp',lead.whatsapp_confirmed); addIndicator(indicators,'Telefone',Boolean(lead.phone)); addIndicator(indicators,'E-mail',Boolean(lead.email));
   addIndicator(indicators,lead.website_url?'Website':'Sem site',Boolean(lead.website_url),!lead.website_url); if(!hasContact(lead))addIndicator(indicators,'Sem contato',false,true);
   indicators.append(node('span','indicator on',`${lead.website_issue_count||0} issues`)); card.append(indicators);
+  if(lead.site_draft?.exists){const action=siteLink(lead.site_draft.site_url,'Ver Site','site-action');action.addEventListener('click',event=>event.stopPropagation());card.append(action)}
   card.addEventListener('click',()=>openDetail(lead)); card.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openDetail(lead)}});card.tabIndex=0;
   card.addEventListener('dragstart',()=>{draggedId=lead.id;card.classList.add('dragging')});card.addEventListener('dragend',()=>{draggedId=null;card.classList.remove('dragging');document.querySelectorAll('.drop-target').forEach(x=>x.classList.remove('drop-target'))});
   return card;
@@ -112,12 +113,16 @@ function openDetail(lead) {
       ['Facts',(benchmark.facts||[]).join(' · ')]
     ])));
   }
+  if(lead.site_draft?.exists){
+    content.append(detailSection('Site',[['Status','Site pronto'],['Gerado em',lead.site_draft.generated_at],['Slug',lead.site_draft.lead_slug],['Visualização',siteLink(lead.site_draft.site_url,'Ver Site')]]));
+  }
   content.append(detailSection('Contatos', [['Telefone',lead.phone],['WhatsApp',lead.whatsapp],['Confirmado',lead.whatsapp_confirmed?'Sim':'Não'],['Fonte WhatsApp',lead.whatsapp_source],['E-mail',lead.email],['Instagram',externalLink(lead.instagram,'Abrir Instagram')]]));
   content.append(detailSection('Prospecção', [['Score',lead.score],['Status',labels[visualStatus(lead.status)]||lead.status],['Batch',lead.batch_id],['Fonte',lead.source],['Descoberto em',lead.discovered_at],['Última verificação',lead.last_checked_at]]));
   el('scrim').hidden=false; el('inspector').classList.add('open');el('inspector').setAttribute('aria-hidden','false');el('close-detail').focus();
 }
 function detailSection(title,rows){const section=node('section','detail-section');section.append(node('h3','',title));const dl=node('dl','');rows.forEach(([label,value])=>{const row=node('div','detail-row');row.append(node('dt','',label));const dd=node('dd','');if(value instanceof Node)dd.append(value);else dd.textContent=value===null||value===undefined||value===''?'—':String(value);row.append(dd);dl.append(row)});section.append(dl);return section}
 function externalLink(value,label){const url=safeUrl(value);if(!url)return node('span','',value?'URL não permitida':'—');const link=node('a','',label);link.href=url;link.target='_blank';link.rel='noopener noreferrer';return link}
+function siteLink(value,label,className=''){const link=node('a',className,label);link.href=value;link.target='_blank';link.rel='noopener noreferrer';return link}
 function closeDetail(){el('inspector').classList.remove('open');el('inspector').setAttribute('aria-hidden','true');el('scrim').hidden=true}
 function showToast(message,error=false){const toast=el('toast');toast.textContent=message;toast.className=`toast ${error?'error':''}`;toast.hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>toast.hidden=true,2600)}
 

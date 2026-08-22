@@ -52,6 +52,16 @@ Abra `http://127.0.0.1:8765`. O servidor não expõe config, banco ou repositór
 
 O MCP oferece `generate_first_website_draft(lead, research, overwrite=false)`. A operação gera apenas artefato local e metadata estruturada; não retorna URL pública.
 
+Para um lead persistido, a ferramenta exige `lead.id` e relê o registro no SQLite. Somente depois de gerar e validar o artefato ela muda o status comercial de `qualified` para `site_ready`. Falha ou conflito preserva o status anterior.
+
+Artefato, oportunidade e status são conceitos independentes:
+
+- `opportunity_type`: `first_website` ou `redesign`;
+- `status`: etapa comercial, incluindo `site_ready`;
+- `site_draft.exists`: prova read-only de que há um artefato válido.
+
+O dashboard detecta artefatos existentes sem alterar leads. Um site criado antes desta versão aparece com **Ver Site**, mas o usuário precisa arrastar explicitamente o card para **Site Pronto** se desejar reconciliar o status.
+
 ## Limites deliberados e próximos passos
 
 - TODO: conjuntos reutilizáveis de benchmarks com TTL/cache.

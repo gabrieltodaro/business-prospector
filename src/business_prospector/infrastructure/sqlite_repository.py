@@ -13,7 +13,7 @@ from business_prospector.domain.normalization import normalize_address, normaliz
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.domain.first_website import FirstWebsiteMarketReport
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 LEAD_COLUMNS = (
     "id", "external_place_id", "slug", "name", "normalized_name", "category", "city",
@@ -23,6 +23,11 @@ LEAD_COLUMNS = (
     "website_issue_mobile", "website_issue_cta", "website_issue_content",
     "website_issue_social_proof", "website_issue_platform", "website_issue_count",
     "qualification_reason", "score", "status", "source", "discovered_at", "last_checked_at",
+)
+ALL_LEAD_COLUMNS = LEAD_COLUMNS + (
+    "website_assessment_json", "assessment_status", "assessment_checked_at", "batch_id",
+    "opportunity_type", "first_website_reason", "market_research_json",
+    "market_research_status", "market_research_checked_at",
 )
 
 SCHEMA = """
@@ -58,7 +63,7 @@ CREATE TABLE IF NOT EXISTS leads (
     website_issue_count INTEGER NOT NULL DEFAULT 0,
     qualification_reason TEXT NOT NULL DEFAULT '',
     score INTEGER NOT NULL DEFAULT 0 CHECK (score >= 0 AND score <= 100),
-    status TEXT NOT NULL DEFAULT 'qualified' CHECK (status IN ('new','qualified','needs_review','contacted','proposal','closed','discarded','rejected')),
+    status TEXT NOT NULL DEFAULT 'qualified' CHECK (status IN ('new','qualified','needs_review','site_ready','contacted','proposal','closed','discarded','rejected')),
     source TEXT NOT NULL,
     discovered_at TEXT NOT NULL,
     last_checked_at TEXT NOT NULL,
@@ -108,6 +113,11 @@ class SQLiteLeadRepository:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(leads)")}
             if "opportunity_type" not in columns:
                 self._migrate_opportunity_type(connection)
+            table_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'leads'"
+            ).fetchone()[0]
+            if "site_ready" not in table_sql:
+                self._migrate_site_ready(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     @staticmethod
@@ -144,6 +154,21 @@ class SQLiteLeadRepository:
         connection.execute("ALTER TABLE leads ADD COLUMN market_research_json TEXT")
         connection.execute("ALTER TABLE leads ADD COLUMN market_research_status TEXT")
         connection.execute("ALTER TABLE leads ADD COLUMN market_research_checked_at TEXT")
+
+    @staticmethod
+    def _migrate_site_ready(connection: sqlite3.Connection) -> None:
+        columns = ", ".join(ALL_LEAD_COLUMNS)
+        connection.execute("ALTER TABLE leads RENAME TO leads_before_site_ready")
+        connection.executescript(SCHEMA)
+        connection.execute(
+            f"INSERT INTO leads ({columns}) SELECT {columns} FROM leads_before_site_ready"  # noqa: S608
+        )
+        connection.execute("DROP TABLE leads_before_site_ready")
+        connection.executescript(SCHEMA)
+
+    @property
+    def database_path(self) -> Path:
+        return self._path
 
     def save(self, lead: Lead) -> Lead:
         lead.validate()

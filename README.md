@@ -171,6 +171,8 @@ O fluxo separado de [oportunidades de primeiro site](docs/first-website.md) pesq
 
 Leads `first_website` qualificados podem alimentar a [geração local de primeiro site](docs/site-generation.md). O gerador produz HTML/CSS original para revisão interna, preserva fatos desconhecidos como pendências e não publica nem contata o prospect.
 
+Após geração e validação bem-sucedidas para um lead persistido, o pipeline move somente esse lead para `site_ready` (**Site Pronto**). O [dashboard](docs/dashboard.md) valida o artefato independentemente do status e oferece **Ver Site** em `/sites/<slug>/`, restrito ao servidor local.
+
 ## Seguranca
 
 - secrets e bancos locais sao ignorados pelo Git;

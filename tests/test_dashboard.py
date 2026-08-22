@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import threading
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
@@ -11,8 +12,10 @@ from typing import Iterator
 import pytest
 
 from business_prospector.dashboard import DashboardApplication, create_handler
+from business_prospector.application.site_generation import SiteGenerationService
 from business_prospector.domain.models import Lead, WebsiteAssessment
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
+from business_prospector.package_resources import site_demo_fixture_resource
 
 
 STATIC_DIR = Path(__file__).parents[1] / "src" / "business_prospector" / "dashboard_static"
@@ -72,6 +75,20 @@ def application(tmp_path: Path) -> DashboardApplication:
     return DashboardApplication(repository)
 
 
+def create_draft(application: DashboardApplication) -> tuple[Lead, Path]:
+    stored = application.repository.list()[0]
+    payload = json.loads(site_demo_fixture_resource().read_text(encoding="utf-8"))
+    payload["lead"].update({
+        "name": stored.name, "slug": stored.slug, "category": stored.category,
+        "city": stored.city, "rating": stored.rating, "review_count": stored.review_count,
+        "status": "qualified", "opportunity_type": "first_website",
+    })
+    result = SiteGenerationService(application.repository.database_path.parent / "sites").generate(
+        payload["lead"], payload["research"],
+    )
+    return stored, Path(result.site_path or "")
+
+
 def test_lists_filters_and_returns_security_headers(application: DashboardApplication) -> None:
     with running_server(application) as address:
         status, headers, body = call(address, "GET", "/api/leads?city=cat&min_score=80")
@@ -95,8 +112,17 @@ def test_status_only_update_persists_valid_pipeline_status(application: Dashboar
     assert application.repository.get(lead_id).status == "contacted"  # type: ignore[union-attr]
     assert statuses_code == 200
     assert json.loads(statuses_body)["statuses"] == [
-        "new", "qualified", "needs_review", "contacted", "proposal", "closed", "discarded"
+        "new", "qualified", "needs_review", "site_ready", "contacted", "proposal", "closed", "discarded"
     ]
+
+
+def test_drag_target_site_ready_persists_for_any_opportunity(application: DashboardApplication) -> None:
+    lead_id = application.repository.list()[0].id
+    assert lead_id is not None
+    with running_server(application) as address:
+        status, _, body = call(address, "PATCH", f"/api/leads/{lead_id}/status", {"status": "site_ready"})
+    assert status == 200 and json.loads(body)["lead"]["status"] == "site_ready"
+    assert application.repository.get(lead_id).opportunity_type == "redesign"  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize(
@@ -160,6 +186,61 @@ def test_repository_errors_do_not_leak_details(
     assert b"secret filesystem detail" not in body
 
 
+def test_valid_draft_is_in_api_and_site_routes_serve_only_allowed_files(
+    application: DashboardApplication,
+) -> None:
+    stored, site = create_draft(application)
+    (site / "assets" / "mark.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    with running_server(application) as address:
+        api_status, _, api_body = call(address, "GET", "/api/leads")
+        index_status, index_headers, index_body = call(address, "GET", f"/sites/{stored.slug}/")
+        css_status, css_headers, css_body = call(address, "GET", f"/sites/{stored.slug}/styles.css")
+        asset_status, _, asset_body = call(address, "GET", f"/sites/{stored.slug}/assets/mark.svg")
+        manifest_status, _, _ = call(address, "GET", f"/sites/{stored.slug}/site-manifest.json")
+        listing_status, _, _ = call(address, "GET", f"/sites/{stored.slug}/assets/")
+    draft = json.loads(api_body)["leads"][0]["site_draft"]
+    assert api_status == 200 and draft["exists"] is True
+    assert draft["site_url"] == f"/sites/{stored.slug}/" and "site_path" not in draft
+    assert index_status == 200 and b'<html lang="pt-BR">' in index_body
+    assert index_headers["Content-Type"].startswith("text/html")
+    assert css_status == 200 and b"@media" in css_body
+    assert css_headers["Content-Type"].startswith("text/css")
+    assert asset_status == 200 and asset_body.startswith(b"<svg")
+    assert manifest_status == 404 and listing_status == 404
+
+
+@pytest.mark.parametrize("suffix", [
+    "../dashboard.db", "%2e%2e/dashboard.db", "%2Fetc/passwd", "assets/%2e%2e/index.html",
+    "dashboard.db", "config/default.json", ".env", "service-env/ai.openclaw.gateway.env",
+])
+def test_generated_site_route_rejects_traversal_and_non_generated_files(
+    application: DashboardApplication, suffix: str,
+) -> None:
+    stored, _ = create_draft(application)
+    with running_server(application) as address:
+        status, _, body = call(address, "GET", f"/sites/{stored.slug}/{suffix}")
+    assert status == 404 and b"dashboard.db" not in body
+
+
+def test_generated_site_route_rejects_symlink_escape(application: DashboardApplication) -> None:
+    stored, site = create_draft(application)
+    outside = application.repository.database_path
+    os.symlink(outside, site / "assets" / "database.db")
+    with running_server(application) as address:
+        status, _, _ = call(address, "GET", f"/sites/{stored.slug}/assets/database.db")
+    assert status == 404
+
+
+def test_missing_or_invalid_draft_has_no_site_action_metadata(application: DashboardApplication) -> None:
+    stored = application.repository.list()[0]
+    assert application.lead_payload(stored)["site_draft"]["exists"] is False
+    _, site = create_draft(application)
+    (site / "site-manifest.json").write_text("{}")
+    payload = application.lead_payload(stored)
+    assert payload["site_draft"]["exists"] is False
+    assert payload["site_draft"]["site_url"] is None
+
+
 def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     source = (STATIC_DIR / "app.js").read_text()
     assert "innerHTML" not in source
@@ -172,6 +253,9 @@ def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     assert "website_assessment" in source
     assert "(criterion.facts||[]).join" in source
     assert "Primeiro Site" in source
+    assert "site_ready','Site Pronto" in source
+    assert "lead.site_draft?.exists" in source
+    assert "Ver Site" in source
     assert "opportunity_type" in source
     assert "market_research" in source
     assert "research.benchmark_market" in source

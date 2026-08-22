@@ -20,6 +20,7 @@ PIPELINE_STATUSES = (
     "new",
     "qualified",
     "needs_review",
+    "site_ready",
     "contacted",
     "proposal",
     "closed",

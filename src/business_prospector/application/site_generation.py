@@ -14,6 +14,7 @@ from urllib.parse import quote, urlsplit
 
 from business_prospector.domain.exceptions import ValidationError
 from business_prospector.domain.site_generation import FirstWebsiteSiteBrief, SITE_STRATEGY_VERSION
+from business_prospector.application.ports import LeadRepository
 
 GENERATOR_VERSION = "1.0.0"
 REQUIRED_FILES = ("index.html", "styles.css", "site-manifest.json", "README.md")
@@ -23,6 +24,89 @@ GENERATED_FILES = ("index.html", "styles.css", "assets/", "site-manifest.json", 
 def controlled_sites_root(data_dir: Path) -> Path:
     """Derive the non-user-selectable generated-sites root from plugin data."""
     return data_dir.expanduser().resolve() / "sites"
+
+
+@dataclass(frozen=True, slots=True)
+class SiteDraftInfo:
+    exists: bool
+    lead_slug: str
+    site_path: Path | None = None
+    generated_at: str | None = None
+    generation_status: str = "missing"
+    manifest: dict[str, Any] | None = None
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "exists": self.exists, "lead_slug": self.lead_slug,
+            "generated_at": self.generated_at, "generation_status": self.generation_status,
+            "manifest": self.manifest,
+            "site_url": f"/sites/{self.lead_slug}/" if self.exists else None,
+        }
+
+
+class SiteDraftService:
+    """Read-only boundary for validated generated artifacts."""
+
+    def __init__(self, sites_root: Path) -> None:
+        self._sites_root = sites_root.expanduser().resolve()
+
+    def inspect(self, slug: str) -> SiteDraftInfo:
+        try:
+            site = self._site_directory(slug)
+            if not site.is_dir():
+                return SiteDraftInfo(False, slug)
+            validate_generated_site(site)
+            raw_manifest = json.loads((site / "site-manifest.json").read_text(encoding="utf-8"))
+            if not isinstance(raw_manifest, dict):
+                raise ValidationError("site manifest must be an object")
+            identity = raw_manifest.get("lead_identity")
+            if not isinstance(identity, dict) or identity.get("slug") != slug:
+                raise ValidationError("site manifest identity does not match lead")
+            generated_at = raw_manifest.get("generated_at")
+            if not isinstance(generated_at, str) or not generated_at.strip():
+                raise ValidationError("site manifest generated_at is invalid")
+            safe_manifest = {
+                key: raw_manifest.get(key) for key in (
+                    "opportunity_type", "generated_at", "generator_version", "source_batch_id",
+                    "benchmark_market", "strategy_version", "missing_information",
+                )
+            }
+            return SiteDraftInfo(True, slug, site, generated_at, "generated", safe_manifest)
+        except (ValidationError, ValueError, OSError, json.JSONDecodeError):
+            return SiteDraftInfo(False, slug, generation_status="invalid")
+
+    def resolve_file(self, slug: str, relative_parts: tuple[str, ...]) -> Path | None:
+        info = self.inspect(slug)
+        if not info.exists or info.site_path is None:
+            return None
+        if not relative_parts:
+            relative_parts = ("index.html",)
+        allowed = relative_parts in {("index.html",), ("styles.css",)}
+        if relative_parts and relative_parts[0] == "assets" and len(relative_parts) > 1:
+            allowed = all(part not in {"", ".", ".."} and "/" not in part and "\\" not in part for part in relative_parts)
+        if not allowed:
+            return None
+        candidate = info.site_path.joinpath(*relative_parts).resolve()
+        try:
+            candidate.relative_to(info.site_path)
+        except ValueError:
+            return None
+        return candidate if candidate.is_file() else None
+
+    def _site_directory(self, slug: str) -> Path:
+        try:
+            from business_prospector.domain.normalization import slugify
+            safe_slug = slugify(slug)
+        except ValueError as exc:
+            raise ValidationError("unsafe site slug") from exc
+        if slug != safe_slug or slug in {"", ".", ".."}:
+            raise ValidationError("unsafe site slug")
+        site = (self._sites_root / slug).resolve()
+        try:
+            site.relative_to(self._sites_root)
+        except ValueError as exc:
+            raise ValidationError("unsafe site path") from exc
+        return site
 
 
 class CategorySitePolicy(Protocol):
@@ -207,6 +291,30 @@ class SiteGenerationService:
 <section class="reputation"><div><p class="eyebrow">Reputação pública</p><h2>{brief.rating:.1f} de 5</h2><p>Com base em {brief.review_count} avaliações públicas.</p></div></section>
 <section id="contato"><p class="eyebrow">Localização e contato</p><h2>Fale com {name}</h2>{address}<div class="actions">{contacts}</div></section></main>
 <footer><p>{name} · {city}</p><p>Rascunho demonstrativo — informações sujeitas a confirmação.</p></footer></body></html>'''
+
+
+class PersistedSiteGenerationWorkflow:
+    """Coordinates artifact generation and the post-validation pipeline transition."""
+
+    def __init__(self, repository: LeadRepository, generator: SiteGenerationService) -> None:
+        self._repository = repository
+        self._generator = generator
+
+    def generate(
+        self, lead_id: int, research: dict[str, Any], *, overwrite: bool = False,
+    ) -> tuple[SiteGenerationResult, Any | None]:
+        if isinstance(lead_id, bool) or not isinstance(lead_id, int) or lead_id < 1:
+            raise ValidationError("persisted lead id is required")
+        lead = self._repository.get(lead_id)
+        if lead is None:
+            raise ValidationError("persisted lead not found")
+        if lead.status != "qualified":
+            raise ValidationError("persisted lead must have qualified status")
+        result = self._generator.generate(lead.to_dict(), research, overwrite=overwrite)
+        if not result.ok:
+            return result, None
+        updated = self._repository.update(lead_id, {"status": "site_ready"})
+        return result, updated
 
 
 _CSS = """\

@@ -147,7 +147,7 @@ def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
     assert updated.name == original.name
     assert updated.status == "proposal"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(leads)")}
     assert "ix_leads_name_city" in indexes
 
@@ -190,6 +190,31 @@ def test_schema_v3_defaults_existing_leads_to_redesign(tmp_path: Path) -> None:
     assert migrated is not None
     assert migrated.opportunity_type == "redesign"
     assert migrated.market_research is None
+
+
+def test_schema_v4_adds_site_ready_without_mutating_existing_statuses(tmp_path: Path) -> None:
+    from business_prospector.infrastructure.sqlite_repository import ALL_LEAD_COLUMNS, SCHEMA
+
+    database = tmp_path / "v4.db"
+    repository = SQLiteLeadRepository(database)
+    original = repository.save(lead("Existing qualified"))
+    columns = ", ".join(ALL_LEAD_COLUMNS)
+    old_schema = SCHEMA.replace(",'site_ready'", "")
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE leads RENAME TO leads_current")
+        connection.executescript(old_schema)
+        connection.execute(
+            f"INSERT INTO leads ({columns}) SELECT {columns} FROM leads_current"
+        )
+        connection.execute("DROP TABLE leads_current")
+        connection.execute("PRAGMA user_version = 4")
+
+    migrated = SQLiteLeadRepository(database)
+    assert migrated.get(original.id or 0).status == "qualified"  # type: ignore[union-attr]
+    updated = migrated.update(original.id or 0, {"status": "site_ready"})
+    assert updated.status == "site_ready"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_legacy_competitor_research_rows_load_as_benchmarks_without_migration(

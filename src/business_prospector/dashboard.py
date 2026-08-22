@@ -11,11 +11,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from importlib.resources.abc import Traversable
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from business_prospector.application.config import ProspectingConfig
 from business_prospector.application.lead_status import LeadStatusService
 from business_prospector.application.prospecting import ProspectingService
+from business_prospector.application.site_generation import SiteDraftService, controlled_sites_root
 from business_prospector.domain.exceptions import LeadNotFoundError, ProspectorError, ValidationError
 from business_prospector.domain.models import PIPELINE_STATUSES, Lead
 from business_prospector.infrastructure.fake_providers import (
@@ -40,9 +41,12 @@ STATIC_FILES = {
 
 
 class DashboardApplication:
-    def __init__(self, repository: SQLiteLeadRepository) -> None:
+    def __init__(self, repository: SQLiteLeadRepository, sites_root: Path | None = None) -> None:
         self.repository = repository
         self.statuses = LeadStatusService(repository)
+        self.drafts = SiteDraftService(
+            sites_root or controlled_sites_root(repository.database_path.parent)
+        )
 
     def list_leads(self, filters: dict[str, str]) -> list[Lead]:
         leads = self.repository.list(1000)
@@ -77,6 +81,11 @@ class DashboardApplication:
     def change_status(self, lead_id: int, status: str) -> Lead:
         return self.statuses.change(lead_id, status)
 
+    def lead_payload(self, lead: Lead) -> dict[str, Any]:
+        payload = lead.to_dict()
+        payload["site_draft"] = self.drafts.inspect(lead.slug or "").public_dict()
+        return payload
+
 
 def create_handler(application: DashboardApplication, static_dir: Traversable) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
@@ -95,12 +104,14 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
             try:
                 if parsed.path == "/api/leads":
                     filters = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
-                    return self._json(HTTPStatus.OK, {"leads": [lead.to_dict() for lead in application.list_leads(filters)]})
+                    return self._json(HTTPStatus.OK, {"leads": [application.lead_payload(lead) for lead in application.list_leads(filters)]})
                 if parsed.path == "/api/statuses":
                     return self._json(HTTPStatus.OK, {"statuses": list(application.statuses.allowed_statuses)})
                 lead_id = self._lead_id(parsed.path)
                 if lead_id is not None:
-                    return self._json(HTTPStatus.OK, {"lead": application.get_lead(lead_id).to_dict()})
+                    return self._json(HTTPStatus.OK, {"lead": application.lead_payload(application.get_lead(lead_id))})
+                if parsed.path.startswith("/sites/"):
+                    return self._generated_site(parsed.path)
                 if parsed.path in STATIC_FILES:
                     return self._static(STATIC_FILES[parsed.path])
                 return self._error(HTTPStatus.NOT_FOUND, "not found")
@@ -122,7 +133,7 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
                 if set(payload) != {"status"} or not isinstance(payload.get("status"), str):
                     raise ValidationError("request must contain only a string status")
                 lead = application.change_status(lead_id, payload["status"])
-                return self._json(HTTPStatus.OK, {"lead": lead.to_dict()})
+                return self._json(HTTPStatus.OK, {"lead": application.lead_payload(lead)})
             except ValidationError as exc:
                 return self._error(HTTPStatus.BAD_REQUEST, str(exc))
             except LeadNotFoundError as exc:
@@ -183,6 +194,34 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
             content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _generated_site(self, raw_path: str) -> None:
+            try:
+                decoded = unquote(raw_path, encoding="utf-8", errors="strict")
+            except UnicodeError:
+                return self._error(HTTPStatus.NOT_FOUND, "not found")
+            parts = decoded.strip("/").split("/")
+            if len(parts) < 2 or parts[0] != "sites" or not parts[1]:
+                return self._error(HTTPStatus.NOT_FOUND, "not found")
+            relative = tuple(parts[2:])
+            if relative == ("",):
+                relative = ()
+            path = application.drafts.resolve_file(parts[1], relative)
+            if path is None:
+                return self._error(HTTPStatus.NOT_FOUND, "not found")
+            try:
+                body = path.read_bytes()
+            except OSError:
+                return self._error(HTTPStatus.NOT_FOUND, "not found")
+            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            if content_type not in {"text/html", "text/css", "image/png", "image/jpeg", "image/svg+xml", "image/webp"}:
+                return self._error(HTTPStatus.NOT_FOUND, "not found")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type + ("; charset=utf-8" if content_type.startswith("text/") else ""))
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

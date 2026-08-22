@@ -6,12 +6,16 @@ from pathlib import Path
 import pytest
 
 from business_prospector.application.site_generation import (
+    PersistedSiteGenerationWorkflow,
+    SiteDraftService,
     SiteGenerationService,
     controlled_sites_root,
     validate_generated_site,
 )
 from business_prospector.domain.exceptions import ValidationError
 from business_prospector.domain.site_generation import FirstWebsiteSiteBrief
+from business_prospector.domain.models import Lead, WebsiteAssessment
+from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
 from business_prospector.site_preview import resolve_site_directory
 
 
@@ -141,3 +145,68 @@ def test_application_controls_sites_root_from_plugin_data(tmp_path: Path) -> Non
     assert sites_root == data_dir.resolve() / "sites"
     result = SiteGenerationService(sites_root).generate(lead(), research())
     assert Path(result.site_path or "").parent == sites_root
+
+
+def persisted_first_website(repository: SQLiteLeadRepository) -> Lead:
+    return repository.save(Lead(
+        name="Clínica Sorriso Teste", slug="clinica-sorriso-teste-catanduva-sp",
+        category="dentist", city="Catanduva, SP", rating=4.9, review_count=180,
+        website_url="", assessment=WebsiteAssessment(reason="First website opportunity"),
+        phone="+55 17 3000-0000", status="qualified", opportunity_type="first_website",
+        first_website_reason="no_website", batch_id="batch-fixture",
+        external_place_id="target-place", market_research=research(),
+        market_research_status="complete", market_research_checked_at="2026-08-21T00:00:00+00:00",
+    ))
+
+
+def test_persisted_generation_transitions_only_after_success(tmp_path: Path) -> None:
+    repository = SQLiteLeadRepository(tmp_path / "data" / "business-prospector.db")
+    stored = persisted_first_website(repository)
+    workflow = PersistedSiteGenerationWorkflow(
+        repository, SiteGenerationService(tmp_path / "data" / "sites"),
+    )
+    result, updated = workflow.generate(stored.id or 0, research())
+    assert result.ok and updated is not None and updated.status == "site_ready"
+    assert repository.get(stored.id or 0).status == "site_ready"  # type: ignore[union-attr]
+
+
+def test_generation_failure_and_conflict_preserve_previous_status(tmp_path: Path) -> None:
+    repository = SQLiteLeadRepository(tmp_path / "data" / "business-prospector.db")
+    stored = persisted_first_website(repository)
+    generator = SiteGenerationService(tmp_path / "data" / "sites")
+    generator.generate(stored.to_dict(), research())
+    result, updated = PersistedSiteGenerationWorkflow(repository, generator).generate(
+        stored.id or 0, research(),
+    )
+    assert not result.ok and result.generation_status == "conflict" and updated is None
+    assert repository.get(stored.id or 0).status == "qualified"  # type: ignore[union-attr]
+
+    broken = research()
+    broken["status"] = "failed"
+    broken["failure_reason"] = "fixture failure"
+    broken["benchmarks"] = []
+    broken["common_features"] = []
+    with pytest.raises(ValidationError):
+        PersistedSiteGenerationWorkflow(
+            repository, SiteGenerationService(tmp_path / "other-sites"),
+        ).generate(stored.id or 0, broken)
+    assert repository.get(stored.id or 0).status == "qualified"  # type: ignore[union-attr]
+
+
+def test_draft_metadata_requires_valid_site_and_matching_manifest(tmp_path: Path) -> None:
+    root = tmp_path / "sites"
+    slug = str(lead()["slug"])
+    drafts = SiteDraftService(root)
+    assert drafts.inspect(slug).public_dict() == {
+        "exists": False, "lead_slug": slug, "generated_at": None,
+        "generation_status": "missing", "manifest": None, "site_url": None,
+    }
+    generated = SiteGenerationService(root).generate(lead(), research())
+    info = drafts.inspect(slug)
+    assert info.exists and info.site_path == Path(generated.site_path or "")
+    assert info.public_dict()["site_url"] == f"/sites/{slug}/"
+    manifest_path = Path(generated.site_path or "") / "site-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["lead_identity"]["slug"] = "another-lead"
+    manifest_path.write_text(json.dumps(manifest))
+    assert not drafts.inspect(slug).exists

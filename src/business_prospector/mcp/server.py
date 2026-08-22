@@ -14,7 +14,11 @@ from business_prospector.application.batch import BatchProspectingService
 from business_prospector.application.first_website import FirstWebsiteProspectingService
 from business_prospector.application.ports import SearchQuery
 from business_prospector.application.prospecting import ProspectingService
-from business_prospector.application.site_generation import SiteGenerationService, controlled_sites_root
+from business_prospector.application.site_generation import (
+    PersistedSiteGenerationWorkflow,
+    SiteGenerationService,
+    controlled_sites_root,
+)
 from business_prospector.domain.exceptions import ProspectorError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
 from business_prospector.domain.scoring import calculate_score
@@ -388,10 +392,16 @@ def qualify_and_save_first_website_candidate(
 def generate_first_website_draft(
     lead: dict[str, Any], research: dict[str, Any], overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Generate one qualified first-website draft locally; never deploys or contacts anyone."""
+    """Generate a persisted qualified lead draft, then mark it site_ready."""
     try:
-        result = SiteGenerationService(_sites_root()).generate(lead, research, overwrite=overwrite)
-        return _response("generate_first_website_draft", result.to_dict(), result.error)
+        lead_id = lead.get("id") if isinstance(lead, dict) else None
+        repository = _repository()
+        result, updated = PersistedSiteGenerationWorkflow(
+            repository, SiteGenerationService(_sites_root()),
+        ).generate(lead_id, research, overwrite=overwrite)
+        data = result.to_dict()
+        data["lead_status"] = updated.status if updated else None
+        return _response("generate_first_website_draft", data, result.error)
     except (ProspectorError, TypeError, ValueError, OSError) as exc:
         LOGGER.warning("generate_first_website_draft failed: %s", exc)
         return _response("generate_first_website_draft", error=str(exc))

@@ -1,5 +1,23 @@
 # Dashboard Kanban local
 
+## Site Pronto
+
+O Kanban possui a etapa `site_ready`, apresentada como **Site Pronto**, entre Revisar e Contatado. Ela é independente de `opportunity_type`: tanto Primeiro Site quanto Redesign podem ocupar essa coluna.
+
+Quando `generate_first_website_draft` conclui geração e validação para um lead persistido qualificado, o status muda para `site_ready`. Falhas e conflitos não alteram o lead. Drag-and-drop manual para dentro ou fora da coluna continua permitido.
+
+O dashboard consulta `SiteDraftService` para cada slug. O status sozinho não prova que existe site: o botão **Ver Site** aparece somente quando estrutura e `site-manifest.json` são válidos. A API expõe metadata segura, nunca o path absoluto.
+
+Sites válidos são servidos em:
+
+```text
+http://127.0.0.1:8765/sites/<lead-slug>/
+```
+
+Somente `index.html`, `styles.css` e arquivos regulares sob `assets/` são servidos. Slugs inválidos, traversal normal ou codificado, symlinks externos, manifestos, SQLite, config e arquivos de ambiente retornam 404. Não há listagem de diretórios. Consulte [pathlib](https://docs.python.org/3/library/pathlib.html), [http.server](https://docs.python.org/3/library/http.server.html) e [urllib.parse](https://docs.python.org/3/library/urllib.parse.html).
+
+Sites gerados antes da atualização não provocam atualização automática do banco. Para reconciliar um lead, confirme o botão **Ver Site** e arraste somente aquele card para **Site Pronto**.
+
 ## Arquitetura e estado
 
 ```text
@@ -45,12 +63,13 @@ As colunas persistidas sao:
 - `new` — Novo;
 - `qualified` — Qualificado;
 - `needs_review` — Revisar;
+- `site_ready` — Site Pronto;
 - `contacted` — Contatado;
 - `proposal` — Proposta;
 - `closed` — Fechado;
 - `discarded` — Descartado.
 
-`rejected` continua aceito apenas para compatibilidade com registros antigos e e exibido em Descartado. As novas movimentacoes usam `discarded`. A migracao SQLite v1 -> v2 preserva os leads e amplia o `CHECK` de status.
+`rejected` continua aceito apenas para compatibilidade com registros antigos e e exibido em Descartado. As novas movimentacoes usam `discarded`. A migracao SQLite v4 -> v5 preserva os leads, amplia o `CHECK` de status e nao altera o status de nenhuma linha.
 
 Cada card mostra empresa, cidade, categoria, score persistido, rating, numero de avaliacoes, motivo de qualificacao, quantidade de issues e indicadores de website/WhatsApp/telefone/e-mail. A ordenacao prioriza score e avaliacoes. Busca, cidade, categoria e score minimo filtram a visualizacao em memoria; a API tambem aceita `status`, `city`, `category` e `min_score` em `GET /api/leads`.
 
@@ -74,7 +93,7 @@ O backend aceita exatamente esse campo, valida ID e status pelo dominio e atuali
 - CSP, `nosniff`, `no-referrer`, protecao contra frames e Permissions Policy sao enviados em todas as respostas;
 - corpos JSON exigem tipo correto, tamanho maximo de 4 KiB, objeto valido e schema restrito;
 - metodos mutantes nao suportados retornam 405 e erros internos nao enviam stack traces ou detalhes locais;
-- somente `index.html`, `styles.css` e `app.js` sao servidos de um diretorio dedicado do pacote;
+- os assets do dashboard continuam em allowlist; sites validados expõem somente `index.html`, `styles.css` e arquivos sob `assets/`;
 - banco, config, Git, service-env, logs e demais paths nunca entram no file server; traversal retorna 404;
 - nao ha shell execution nem SQL construido a partir de entrada HTTP;
 - SQLite continua usando context managers, WAL, busy timeout e validacoes do dominio.
@@ -98,7 +117,7 @@ Entao abra `http://127.0.0.1:8765` no proprio Mac Mini (ou use um tunel delibera
 ## Limites atuais
 
 - sem autenticacao ou hosting publico;
-- sem fluxo para empresas sem website;
+- sem edicao ou aprovacao formal do site dentro do dashboard;
 - sem fatos/inferencias Playwright ou breakdown de score persistidos;
 - sem batch prospecting, outreach, edicao geral ou delete;
 - a interface nao inicia Places, Playwright ou MCP; ela apenas opera leads ja persistidos.
