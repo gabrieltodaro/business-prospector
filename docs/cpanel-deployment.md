@@ -46,6 +46,15 @@ Normative references: [UAPI overview](https://api.docs.cpanel.net/openapi/cpanel
 [rename](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-rename_file), and
 [installed SSL hosts](https://api.docs.cpanel.net/specifications/cpanel.openapi/cpanel-account-ssl-management/ssl-installed_hosts).
 
+The standard cPanel documentation shows a UAPI v3 outer envelope containing
+`apiversion`, `module`, `func` and `result`. Some hosting environments or proxies have
+been observed returning that `result` object directly. `CPanelUapiClient` normalizes
+both the documented wrapped form and this credible flattened response variant at one
+transport boundary. A flattened object is accepted only when it contains both `status`
+and `data`; arbitrary JSON objects remain malformed. Application and domain code never
+depend on which transport response shape was received. This is compatibility with an
+observed hosting response variant, not a provider guarantee.
+
 ## Authentication and secrets
 
 Only cPanel API Token authentication is supported:

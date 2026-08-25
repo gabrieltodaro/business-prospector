@@ -25,6 +25,7 @@ from business_prospector.infrastructure.cpanel import (
     HostGatorPreviewDeploymentProvider,
     HttpRequest,
     HttpResponse,
+    UploadFile,
     cpanel_connection_test,
     cpanel_configuration_status,
 )
@@ -98,6 +99,19 @@ def documented_response(data: Any) -> HttpResponse:
     }).encode(), "application/json")
 
 
+def flattened_response(
+    data: Any, *, status: int = 1, errors: Any = None, messages: Any = None,
+) -> HttpResponse:
+    return HttpResponse(200, json.dumps({
+        "messages": messages,
+        "status": status,
+        "metadata": {},
+        "errors": errors,
+        "data": data,
+        "warnings": None,
+    }).encode(), "application/json")
+
+
 def site(tmp_path: Path) -> Path:
     root = tmp_path / "site"
     (root / "assets").mkdir(parents=True)
@@ -162,6 +176,86 @@ def test_client_normalizes_errors_and_redacts_token(
     assert TOKEN not in str(caught.value)
 
 
+def test_client_normalizes_documented_and_flattened_success() -> None:
+    wrapped = CPanelUapiClient(config(), FakeTransport(response([{"domain": "one.test"}])))
+    flattened = CPanelUapiClient(
+        config(), FakeTransport(flattened_response([{"domain": "two.test"}])),
+    )
+    assert wrapped.domains_data() == [{"domain": "one.test"}]
+    assert flattened.domains_data() == [{"domain": "two.test"}]
+
+
+@pytest.mark.parametrize("http_response", [response(None), flattened_response(None)])
+def test_client_accepts_null_data_in_both_uapi_forms(http_response: HttpResponse) -> None:
+    assert CPanelUapiClient(config(), FakeTransport(http_response)).add_subdomain(
+        "preview", "gapps.test", "public_html/sales-previews/preview",
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "http_response",
+    [
+        response(None, status=0, errors=["operation failed"]),
+        flattened_response(None, status=0, errors=["operation failed"]),
+    ],
+)
+def test_client_handles_failed_status_in_both_uapi_forms(
+    http_response: HttpResponse,
+) -> None:
+    with pytest.raises(CPanelError) as caught:
+        CPanelUapiClient(config(), FakeTransport(http_response)).domains_data()
+    assert caught.value.code == "uapi_error"
+
+
+@pytest.mark.parametrize("payload", [{}, {"foo": "bar"}, [], "ok"])
+def test_client_rejects_non_uapi_json_shapes(payload: Any) -> None:
+    transport = FakeTransport(HttpResponse(200, json.dumps(payload).encode(), "application/json"))
+    with pytest.raises(CPanelError) as caught:
+        CPanelUapiClient(config(), transport).domains_data()
+    assert caught.value.code == "malformed_response"
+
+
+def test_flattened_failure_redacts_all_infrastructure_values() -> None:
+    sensitive_error = (
+        f"denied {TOKEN} prospector https://cpanel.example.test:2083"
+    )
+    client = CPanelUapiClient(
+        config(), FakeTransport(flattened_response(None, status=0, errors=[sensitive_error])),
+    )
+    with pytest.raises(CPanelError) as caught:
+        client.domains_data()
+    serialized = str(caught.value)
+    for value in (TOKEN, "prospector", "https://cpanel.example.test:2083"):
+        assert value not in serialized
+
+
+@pytest.mark.parametrize(
+    "method_name, arguments, data",
+    [
+        ("domains_data", (), [{"domain": "domain.example"}]),
+        ("list_files", ("public_html/previews",), {"files": [], "dirs": []}),
+        ("add_subdomain", ("preview", "gapps.test", "public_html/previews/preview"), None),
+        ("rename_file", ("public_html/staging", "public_html/preview"), None),
+        ("delete_file", ("public_html/staging",), None),
+        ("installed_ssl_hosts", (), [{"domains": ["preview.gapps.test"]}]),
+    ],
+)
+def test_flattened_shape_is_shared_by_deployment_client_operations(
+    method_name: str, arguments: tuple[str, ...], data: Any,
+) -> None:
+    client = CPanelUapiClient(config(), FakeTransport(flattened_response(data)))
+    assert getattr(client, method_name)(*arguments) == data
+
+
+def test_file_upload_uses_the_same_flattened_response_normalization() -> None:
+    data = {"succeeded": 1, "failed": 0, "uploads": []}
+    client = CPanelUapiClient(config(), FakeTransport(flattened_response(data)))
+    result = client.upload_files(
+        "public_html/previews", [UploadFile("index.html", b"safe", "text/html")],
+    )
+    assert result == data
+
+
 @pytest.mark.parametrize(
     "domain_data, expected_present",
     [
@@ -205,6 +299,31 @@ def test_connectivity_service_returns_only_safe_domain_summary(
     assert not any(operation in request.url for operation in (
         "addsubdomain", "upload_files", "rename_file", "delete_file",
     ))
+
+
+def test_connectivity_service_accepts_flattened_hosting_response_without_leaking_domains() -> None:
+    domain_data = {
+        "main_domain": "temporary.example",
+        "addon_domains": ["customer.example"],
+        "sub_domains": [],
+        "parked_domains": [],
+    }
+    result = cpanel_connection_test(
+        environment(), FakeTransport(flattened_response(domain_data)),
+    ).to_dict()
+    assert result == {
+        "configured": True,
+        "reachable": True,
+        "authenticated": True,
+        "root_domain": "gapps.test",
+        "root_domain_present": False,
+        "domain_count": 2,
+        "error_code": None,
+        "response_shape": None,
+    }
+    serialized = json.dumps(result)
+    assert "temporary.example" not in serialized
+    assert "customer.example" not in serialized
 
 
 @pytest.mark.parametrize(

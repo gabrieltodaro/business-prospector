@@ -251,15 +251,10 @@ class CPanelUapiClient:
                 "malformed_response", "cPanel returned malformed JSON", response_shape=shape,
             ) from None
         shape = _safe_response_shape(response, payload, json_parsed=True)
-        result = payload.get("result") if isinstance(payload, dict) else None
-        if not isinstance(result, dict):
-            raise CPanelError(
-                "malformed_response", "cPanel returned an invalid UAPI envelope",
-                response_shape=shape,
-            )
+        result = _normalize_uapi_response(payload, shape)
         if result.get("status") not in {1, True, "1"}:
-            errors = result.get("errors")
-            message = _safe_error_message(errors, self._config)
+            error_detail = result.get("errors") or result.get("messages")
+            message = _safe_error_message(error_detail, self._config)
             code = _classify_uapi_error(message)
             raise CPanelError(code, message, response_shape=shape)
         return result.get("data"), shape
@@ -537,11 +532,45 @@ def _classify_uapi_error(message: str) -> str:
     return "uapi_error"
 
 
+def _normalize_uapi_response(
+    payload: Any, response_shape: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Normalize documented envelopes and credible flattened UAPI result objects."""
+    if not isinstance(payload, dict):
+        raise CPanelError(
+            "malformed_response", "cPanel returned an invalid UAPI envelope",
+            response_shape=response_shape,
+        )
+    if "result" in payload:
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise CPanelError(
+                "malformed_response", "cPanel returned an invalid UAPI result",
+                response_shape=response_shape,
+            )
+    elif "status" in payload and "data" in payload:
+        result = payload
+    else:
+        raise CPanelError(
+            "malformed_response", "cPanel returned an invalid UAPI envelope",
+            response_shape=response_shape,
+        )
+    if "status" not in result or "data" not in result:
+        raise CPanelError(
+            "malformed_response", "cPanel returned an incomplete UAPI result",
+            response_shape=response_shape,
+        )
+    return result
+
+
 def _safe_response_shape(
     response: HttpResponse, payload: Any, *, json_parsed: bool,
 ) -> dict[str, Any]:
     """Describe only allowlisted UAPI structure; never copy response values."""
-    top_level_keys = {"apiversion", "func", "module", "result"}
+    top_level_keys = {
+        "apiversion", "func", "module", "result", "data", "errors", "messages",
+        "metadata", "status", "warnings",
+    }
     result_keys = {"data", "errors", "messages", "metadata", "status", "warnings"}
     result = payload.get("result") if isinstance(payload, dict) else None
     media_type = (response.content_type or "").partition(";")[0].strip().casefold()
