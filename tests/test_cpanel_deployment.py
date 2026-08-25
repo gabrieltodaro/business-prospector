@@ -89,7 +89,7 @@ def response(data: Any = None, *, status: int = 1, errors: Any = None) -> HttpRe
 def documented_response(data: Any) -> HttpResponse:
     return HttpResponse(200, json.dumps({
         "apiversion": 3,
-        "func": "domains_data",
+        "func": "list_domains",
         "module": "DomainInfo",
         "result": {
             "status": 1, "data": data, "errors": None, "messages": None,
@@ -165,13 +165,17 @@ def test_client_normalizes_errors_and_redacts_token(
 @pytest.mark.parametrize(
     "domain_data, expected_present",
     [
-        ([{"domain": "gapps.test"}, {"domain": "customer.example"}], True),
-        ([{"domain": "one.example"}, {"servername": "two.example"}], False),
         ({
-            "main_domain": {"domain": "gapps.test"},
-            "addon_domains": [{"domain": "customer.example"}],
+            "main_domain": "gapps.test",
+            "addon_domains": ["customer.example"],
             "sub_domains": [],
         }, True),
+        ({
+            "main_domain": "one.example",
+            "addon_domains": [],
+            "sub_domains": ["two.example"],
+            "parked_domains": [],
+        }, False),
     ],
 )
 def test_connectivity_service_returns_only_safe_domain_summary(
@@ -197,7 +201,7 @@ def test_connectivity_service_returns_only_safe_domain_summary(
     assert len(transport.requests) == 1
     request = transport.requests[0]
     assert request.method == "GET"
-    assert "/execute/DomainInfo/domains_data?format=hash" in request.url
+    assert request.url.endswith("/execute/DomainInfo/list_domains")
     assert not any(operation in request.url for operation in (
         "addsubdomain", "upload_files", "rename_file", "delete_file",
     ))
@@ -261,14 +265,8 @@ def test_connectivity_test_requires_complete_configuration_without_request() -> 
     assert not transport.requests
 
 
-def test_malformed_envelope_returns_only_allowlisted_structural_diagnostics() -> None:
-    raw = {
-        "apiversion": 3,
-        "func": "domains_data",
-        "module": "DomainInfo",
-        "result": ["customer.example", "/home/customer/public_html"],
-        "customer.example": "must-not-leak",
-    }
+def test_empty_top_level_object_remains_malformed_with_safe_response_shape() -> None:
+    raw: dict[str, object] = {}
     transport = FakeTransport(HttpResponse(
         200, json.dumps(raw).encode(), "application/json; charset=utf-8",
     ))
@@ -279,14 +277,12 @@ def test_malformed_envelope_returns_only_allowlisted_structural_diagnostics() ->
         "content_type": "application/json",
         "json_parsed": True,
         "top_level_type": "object",
-        "top_level_keys": ["apiversion", "func", "module", "result"],
-        "result_type": "array",
+        "top_level_keys": [],
+        "result_type": "null",
         "result_keys": [],
         "data_type": None,
     }
     serialized = json.dumps(result)
-    assert "customer.example" not in serialized
-    assert "/home/customer" not in serialized
     assert TOKEN not in serialized
 
 

@@ -160,10 +160,10 @@ class CPanelUapiClient:
     def domains_data(self) -> Any:
         return self._get("DomainInfo", "domains_data", {"format": "list"})
 
-    def domains_data_diagnostic(self) -> tuple[Any, dict[str, Any]]:
-        """Use the documented default hash representation and retain only response shape."""
+    def list_domains_diagnostic(self) -> tuple[Any, dict[str, Any]]:
+        """Call the documented read-only domain list and retain only response shape."""
         return self._request_with_shape(
-            "GET", "DomainInfo", "domains_data", {"format": "hash"}, None, None,
+            "GET", "DomainInfo", "list_domains", {}, None, None,
         )
 
     def add_subdomain(self, slug: str, root_domain: str, document_root: str) -> Any:
@@ -298,7 +298,7 @@ class CPanelConnectivityService:
 
     def test(self) -> CPanelConnectionResult:
         try:
-            data, response_shape = self._client.domains_data_diagnostic()
+            data, response_shape = self._client.list_domains_diagnostic()
         except CPanelError as exc:
             reachable = exc.code not in {"network_failure", "timeout"}
             if exc.code == "authentication_failed":
@@ -314,20 +314,16 @@ class CPanelConnectivityService:
                 None, None, exc.code, exc.response_shape,
             )
         try:
-            records = _domain_records(data)
+            domains = _listed_domains(data)
         except CPanelError as exc:
             return CPanelConnectionResult(
                 True, True, True, self._config.root_domain,
                 None, None, exc.code, response_shape,
             )
-        root_present = any(
-            str(record.get("domain") or record.get("servername") or "")
-            .casefold().rstrip(".") == self._config.root_domain
-            for record in records
-        )
+        root_present = self._config.root_domain in domains
         return CPanelConnectionResult(
             True, True, True, self._config.root_domain,
-            root_present, len(records), None, None,
+            root_present, len(domains), None, None,
         )
 
 
@@ -598,6 +594,24 @@ def _domain_records(data: Any) -> tuple[Mapping[str, Any], ...]:
         elif isinstance(value, dict):
             records.append(value)
     return tuple(records)
+
+
+def _listed_domains(data: Any) -> frozenset[str]:
+    """Normalize documented list_domains fields without retaining them in results."""
+    if not isinstance(data, dict):
+        raise CPanelError("malformed_response", "cPanel domain list data is malformed")
+    domains: set[str] = set()
+    main_domain = data.get("main_domain")
+    if main_domain not in {None, ""}:
+        if not isinstance(main_domain, str):
+            raise CPanelError("malformed_response", "cPanel main domain is malformed")
+        domains.add(main_domain.casefold().rstrip("."))
+    for field_name in ("addon_domains", "sub_domains", "parked_domains"):
+        values = data.get(field_name, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise CPanelError("malformed_response", "cPanel domain collection is malformed")
+        domains.update(value.casefold().rstrip(".") for value in values if value)
+    return frozenset(domains)
 
 
 def _domain_document_root(domain: Mapping[str, Any]) -> str:
