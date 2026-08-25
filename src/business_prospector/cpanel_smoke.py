@@ -77,6 +77,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "deployment_purpose": "technical_test",
             "error_code": code,
             "error": str(exc),
+            **({"details": exc.safe_details} if isinstance(exc, CPanelError) and exc.safe_details else {}),
         }, ensure_ascii=False), file=sys.stderr)
         return 2
     print(json.dumps(output, ensure_ascii=False, indent=2))

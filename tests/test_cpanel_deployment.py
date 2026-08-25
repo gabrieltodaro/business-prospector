@@ -235,8 +235,6 @@ def test_flattened_failure_redacts_all_infrastructure_values() -> None:
         ("domains_data", (), [{"domain": "domain.example"}]),
         ("list_files", ("public_html/previews",), {"files": [], "dirs": []}),
         ("add_subdomain", ("preview", "gapps.test", "public_html/previews/preview"), None),
-        ("rename_file", ("public_html/staging", "public_html/preview"), None),
-        ("delete_file", ("public_html/staging",), None),
         ("installed_ssl_hosts", (), [{"domains": ["preview.gapps.test"]}]),
     ],
 )
@@ -297,7 +295,7 @@ def test_connectivity_service_returns_only_safe_domain_summary(
     assert request.method == "GET"
     assert request.url.endswith("/execute/DomainInfo/list_domains")
     assert not any(operation in request.url for operation in (
-        "addsubdomain", "upload_files", "rename_file", "delete_file",
+        "addsubdomain", "upload_files",
     ))
 
 
@@ -496,13 +494,15 @@ def publish_transport(*, ssl_active: bool = False) -> FakeTransport:
     ssl = [{"domains": ["drlaura.gapps.test"]}] if ssl_active else []
     return FakeTransport(
         response({"dirs": [], "files": []}),
-        response({"succeeded": 2, "failed": 0, "uploads": []}),
+        response([]), response({}),
         response({"succeeded": 1, "failed": 0, "uploads": []}),
-        response([]), response({}), response({}), response(ssl),
+        response({"succeeded": 1, "failed": 0, "uploads": []}),
+        response({"succeeded": 1, "failed": 0, "uploads": []}),
+        response(ssl),
     )
 
 
-def test_publish_uploads_staging_then_creates_domain_and_promotes(tmp_path: Path) -> None:
+def test_first_publish_creates_final_domain_then_uploads_directly(tmp_path: Path) -> None:
     transport = publish_transport()
     provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
     result = provider.publish(site(tmp_path), "drlaura")
@@ -511,26 +511,45 @@ def test_publish_uploads_staging_then_creates_domain_and_promotes(tmp_path: Path
     assert result.domain_status == "created"
     assert result.ssl_status == "pending"
     assert result.preview_url == "https://drlaura.gapps.test"
+    assert result.deployment_mode == "direct_first_publish"
+    assert result.cleanup == "manual_required"
+    assert result.uploaded_files == ("index.html", "styles.css", "assets/hero.svg")
     urls = [request.url for request in transport.requests]
-    assert "/execute/Fileman/upload_files?" in urls[1]
-    assert ".staging-drlaura-" in urls[1]
-    assert "/execute/Fileman/rename_file?" in urls[-2]
+    assert "/execute/SubDomain/addsubdomain?" in urls[2]
+    assert "dir=public_html%2Fsales-previews%2Fdrlaura" in urls[2]
+    upload_urls = [url for url in urls if "/execute/Fileman/upload_files?" in url]
+    assert len(upload_urls) == 3
+    assert all("public_html%2Fsales-previews%2Fdrlaura" in url for url in upload_urls)
+    assert all(".staging-" not in url for url in urls)
+    assert all("rename_file" not in url and "delete_file" not in url for url in urls)
     bodies = b"".join(request.body or b"" for request in transport.requests)
     assert b"site-manifest.json" not in bodies and b"README.md" not in bodies
 
 
-def test_partial_upload_fails_and_attempts_only_staging_cleanup(tmp_path: Path) -> None:
+def test_partial_direct_upload_reports_confirmed_files_without_fake_rollback(tmp_path: Path) -> None:
     transport = FakeTransport(
         response({"dirs": [], "files": []}),
-        response({"succeeded": 1, "failed": 1, "uploads": []}),
         response({}),
+        response({}),
+        response({"succeeded": 1, "failed": 0, "uploads": []}),
+        response({"succeeded": 0, "failed": 1, "uploads": []}),
     )
     provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
     with pytest.raises(CPanelError) as caught:
         provider.publish(site(tmp_path), "drlaura")
-    assert caught.value.code == "partial_upload"
-    assert "/execute/Fileman/delete_file?" in transport.requests[-1].url
-    assert "sales-previews%2F.staging-drlaura-" in transport.requests[-1].url
+    assert caught.value.code == "partial_deployment"
+    assert caught.value.safe_details == {
+        "deployment_mode": "direct_first_publish",
+        "cleanup": "manual_required",
+        "uploaded_files": ["index.html"],
+        "files_uploaded": 1,
+        "failed_file": "styles.css",
+        "cause": "upload_failed",
+        "rollback_performed": False,
+    }
+    urls = [request.url for request in transport.requests]
+    assert all("delete" not in url and "rename" not in url for url in urls)
+    assert len([url for url in urls if "upload_files" in url]) == 2
 
 
 def test_existing_final_directory_prevents_unrelated_overwrite(tmp_path: Path) -> None:
@@ -538,8 +557,17 @@ def test_existing_final_directory_prevents_unrelated_overwrite(tmp_path: Path) -
     provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
     with pytest.raises(CPanelError) as caught:
         provider.publish(site(tmp_path), "drlaura")
-    assert caught.value.code == "deployment_conflict"
+    assert caught.value.code == "update_not_supported"
     assert len(transport.requests) == 1
+
+
+def test_destination_precheck_fails_closed_without_upload(tmp_path: Path) -> None:
+    transport = FakeTransport(response(None, status=0, errors=["listing unavailable"]))
+    provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
+    with pytest.raises(CPanelError) as caught:
+        provider.publish(site(tmp_path), "drlaura")
+    assert caught.value.code == "uapi_error"
+    assert all("upload_files" not in request.url for request in transport.requests)
 
 
 def test_status_is_read_only_and_reports_ssl_active() -> None:
@@ -549,15 +577,32 @@ def test_status_is_read_only_and_reports_ssl_active() -> None:
             "documentroot": "public_html/sales-previews/drlaura",
         }]),
         response({
+            "files": [],
+            "dirs": [{"file": "drlaura"}, {"file": ".staging-drlaura-deadbeef"},
+                     {"file": "other-preview"}],
+        }),
+        response({
             "files": [{"file": "index.html", "type": "file"}, {"file": "styles.css", "type": "file"}],
-            "dirs": [{"file": "assets"}],
+            "dirs": [{"file": "assets"}, {"file": "private"}],
         }),
         response([{"domains": ["drlaura.gapps.test"]}]),
     )
     provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
     result = provider.status("drlaura")
     assert result.deployment_status == "published" and result.ssl_status == "active"
+    assert result.public_files == ("assets/", "index.html", "styles.css")
+    assert result.staging_residual_present is True
+    assert result.document_root_present is True
     assert all(request.method == "GET" for request in transport.requests)
+
+
+def test_provider_uses_only_current_uapi_and_no_shell_or_api2() -> None:
+    source = (Path(__file__).parents[1] / "src/business_prospector/infrastructure/cpanel.py").read_text()
+    assert "rename_file" not in source
+    assert "delete_file" not in source
+    assert "Fileman::fileop" not in source
+    assert "api2" not in source.casefold()
+    assert "subprocess" not in source and "os.system" not in source
 
 
 def test_unpublish_is_explicitly_unsupported_and_makes_no_request() -> None:
@@ -640,6 +685,17 @@ def test_unchanged_publish_is_idempotent_without_second_provider_call(tmp_path: 
     assert first.deployment_id == second.deployment_id
     assert provider.publish_calls == 1
     assert "already published" in second.warnings[0]
+    assert second.deployment_mode == "direct_first_publish"
+    assert second.cleanup == "manual_required"
+
+
+def test_changed_published_artifact_is_rejected_without_provider_call(tmp_path: Path) -> None:
+    _, stored, site_path, provider, service = approved_service(tmp_path, "sales_preview")
+    service.publish(stored.id or 0, explicitly_authorized=True)
+    (site_path / "styles.css").write_text("body { color: red; }", encoding="utf-8")
+    with pytest.raises(ValidationError, match="safe replacement is not supported"):
+        service.publish(stored.id or 0, explicitly_authorized=True)
+    assert provider.publish_calls == 1
 
 
 def test_mcp_boundaries_do_not_accept_infrastructure_parameters(monkeypatch: pytest.MonkeyPatch) -> None:

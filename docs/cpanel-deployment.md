@@ -80,9 +80,12 @@ The current cPanel catalog documents these UAPI v3 operations:
 - `GET /execute/SubDomain/addsubdomain` creates the preview subdomain;
 - `POST /execute/Fileman/upload_files` uploads multipart files;
 - `GET /execute/Fileman/list_files` checks directory contents;
-- `GET /execute/Fileman/rename_file` promotes the initial staged directory;
-- `GET /execute/Fileman/delete_file` cleans a failed staging directory only;
 - `GET /execute/SSL/installed_hosts` reports installed certificate coverage.
+
+The current Fileman UAPI catalog also contains `autocompletedir`, `empty_trash`,
+`get_file_content`, `get_file_information`, `save_file_content`, and `transcode`.
+It does **not** contain `rename_file` or `delete_file`. The historical API 2
+`Fileman::fileop` is intentionally not used, and no shell operation is used.
 
 The previously supplied `Domains/add_domain` documentation URL is not present in the
 current official operation catalog. `SubDomain/addsubdomain` is used through the UAPI
@@ -95,7 +98,6 @@ Normative references: [UAPI overview](https://api.docs.cpanel.net/openapi/cpanel
 [domain configuration](https://api.docs.cpanel.net/specifications/cpanel.openapi/domain-information/domaininfo-domains_data),
 [upload files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-upload_files),
 [list files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-list_files),
-[rename](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-rename_file), and
 [installed SSL hosts](https://api.docs.cpanel.net/specifications/cpanel.openapi/cpanel-account-ssl-management/ssl-installed_hosts).
 
 The standard cPanel documentation shows a UAPI v3 outer envelope containing
@@ -169,26 +171,26 @@ The uploader rejects symlinks, traversal, more than 100 files and more than 25 M
 It does not upload `site-manifest.json`, `README.md`, SQLite, source files or secrets.
 Uploads use multipart UAPI requests with `overwrite=0` and permissions `0644`.
 
-## Staging, idempotence and atomicity
+## First publish, idempotence and atomicity
 
-Initial publication uses:
+Initial publication uses the operations available in the current UAPI catalog:
 
 ```text
-public_html/sales-previews/.staging-<slug>-<artifact-id>/
-  -> validate every upload result
-  -> ensure subdomain/document root
-  -> Fileman/rename_file to public_html/sales-previews/<slug>/
+confirm public_html/sales-previews/<slug>/ is absent
+  -> ensure the subdomain points at that final root
+  -> upload each allowlisted file directly to the final root
+  -> validate each individual upload result
 ```
 
-`rename_file` only succeeds when the destination does not exist. This gives a narrow
-promotion boundary for the first publication, but it is not a general atomic directory
-swap. If a final directory already exists, changed-artifact replacement is rejected.
-An unchanged artifact is idempotent through its SHA-256 artifact identity in local
-deployment metadata and does not upload again.
+This is `deployment_mode=direct_first_publish`, not an atomic promotion. If a final
+directory already exists, the provider returns `update_not_supported` and sends no
+files. An unchanged commercial artifact remains idempotent through its SHA-256 artifact
+identity in private local deployment metadata and does not call the provider again.
 
-Failed uploads are failures even if some files succeeded. The provider attempts to delete
-only its exact staging directory. It never deletes the final root, parent directory or an
-unrelated domain.
+If an upload fails, the result is `partial_deployment`, includes only confirmed relative
+public filenames, states `rollback_performed=false`, and sets `cleanup=manual_required`.
+No automatic delete, rename, broad cleanup, or claimed rollback occurs. Safe atomic
+updates require a future SFTP/SSH or equivalent replacement mechanism.
 
 ## SSL and commercial readiness
 
@@ -207,6 +209,12 @@ WHM is not required or used.
 - domain presence and document root;
 - presence of `index.html` and `styles.css`;
 - installed SSL coverage.
+
+The technical `--status` command additionally reports whether a matching
+`.staging-<slug>-*` directory remains and exposes only allowlisted entries in the expected
+public root (`index.html`, `styles.css`, and `assets/`). It never exposes unrelated file or
+directory names. `document_root_present` independently reports whether the expected final
+directory exists.
 
 It does not perform a public HTTP GET and does not mutate local metadata.
 
@@ -230,7 +238,10 @@ After success, the private local `site-manifest.json` receives:
     "ssl_status": "pending",
     "published_at": "...",
     "last_checked_at": null,
-    "warnings": []
+    "warnings": [],
+    "deployment_mode": "direct_first_publish",
+    "cleanup": "manual_required",
+    "uploaded_files": ["index.html", "styles.css", "assets/hero.svg"]
   }
 }
 ```

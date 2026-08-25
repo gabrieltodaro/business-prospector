@@ -38,9 +38,11 @@ DOMAIN_PATTERN = re.compile(
 class CPanelError(Exception):
     def __init__(
         self, code: str, message: str, *, response_shape: Mapping[str, Any] | None = None,
+        safe_details: Mapping[str, Any] | None = None,
     ) -> None:
         self.code = code
         self.response_shape = dict(response_shape) if response_shape else None
+        self.safe_details = dict(safe_details) if safe_details else None
         super().__init__(message)
 
 
@@ -200,14 +202,6 @@ class CPanelUapiClient:
             bytes(body), f"multipart/form-data; boundary={boundary}",
         )
 
-    def rename_file(self, source: str, destination: str) -> Any:
-        return self._get("Fileman", "rename_file", {
-            "source": source, "destination": destination,
-        })
-
-    def delete_file(self, path: str) -> Any:
-        return self._get("Fileman", "delete_file", {"path": path})
-
     def installed_ssl_hosts(self) -> Any:
         return self._get("SSL", "installed_hosts", {})
 
@@ -359,42 +353,48 @@ class HostGatorPreviewDeploymentProvider:
         deployment_id = checksum[:16]
         base_dir = _safe_remote_path(self._config.base_dir)
         final_dir = _safe_remote_path(f"{base_dir}/{slug}")
-        staging_name = f".staging-{slug}-{deployment_id}"
-        staging_dir = _safe_remote_path(f"{base_dir}/{staging_name}")
         if self._directory_exists(base_dir, slug):
             raise CPanelError(
-                "deployment_conflict",
-                "preview directory already exists; atomic replacement is not supported by UAPI",
+                "update_not_supported",
+                "preview directory already exists; safe replacement is not supported by UAPI",
             )
+        domain = self.ensure_subdomain(slug)
         uploaded = 0
-        try:
-            grouped: dict[str, list[UploadFile]] = {}
-            root = site_path.resolve()
-            for path in files:
-                relative = path.relative_to(root)
-                remote_parent = staging_dir
-                if relative.parent != Path("."):
-                    remote_parent = _safe_remote_path(
-                        f"{staging_dir}/{relative.parent.as_posix()}"
-                    )
-                grouped.setdefault(remote_parent, []).append(UploadFile(
-                    relative.name, path.read_bytes(),
-                    mimetypes.guess_type(relative.name)[0] or "application/octet-stream",
-                ))
-            for directory, uploads in grouped.items():
-                data = self._client.upload_files(directory, uploads)
-                succeeded, failed = _upload_counts(data)
-                uploaded += succeeded
-                if failed or succeeded != len(uploads):
-                    raise CPanelError("partial_upload", "cPanel did not store every public file")
-            domain = self.ensure_subdomain(slug)
-            self._client.rename_file(staging_dir, final_dir)
-        except Exception:
+        uploaded_files: list[str] = []
+        root = site_path.resolve()
+        for path in files:
+            relative = path.relative_to(root)
+            remote_parent = final_dir
+            if relative.parent != Path("."):
+                remote_parent = _safe_remote_path(
+                    f"{final_dir}/{relative.parent.as_posix()}"
+                )
+            upload = UploadFile(
+                relative.name, path.read_bytes(),
+                mimetypes.guess_type(relative.name)[0] or "application/octet-stream",
+            )
             try:
-                self._client.delete_file(staging_dir)
-            except CPanelError:
-                pass
-            raise
+                data = self._client.upload_files(remote_parent, [upload])
+                succeeded, failed = _upload_counts(data)
+                if failed or succeeded != 1:
+                    raise CPanelError("upload_failed", "cPanel did not store the public file")
+            except CPanelError as exc:
+                raise CPanelError(
+                    "partial_deployment",
+                    "direct first publish did not complete; manual cleanup is required",
+                    safe_details={
+                        "deployment_mode": "direct_first_publish",
+                        "cleanup": "manual_required",
+                        "uploaded_files": uploaded_files,
+                        "files_uploaded": len(uploaded_files),
+                        "failed_file": relative.as_posix(),
+                        "cause": exc.code,
+                        "rollback_performed": False,
+                    },
+                ) from exc
+            else:
+                uploaded += 1
+                uploaded_files.append(relative.as_posix())
         ssl_status = self._ssl_status(f"{slug}.{self._config.root_domain}")
         warnings = () if ssl_status == "active" else (
             "HTTPS certificate is not active yet; do not send this URL to a prospect",
@@ -402,6 +402,7 @@ class HostGatorPreviewDeploymentProvider:
         return DeploymentResult(
             "published", slug, f"https://{slug}.{self._config.root_domain}", uploaded,
             domain.status, ssl_status, deployment_id, checksum, warnings,
+            "direct_first_publish", "manual_required", tuple(uploaded_files),
         )
 
     def ensure_subdomain(self, preview_slug: str) -> DomainEnsureResult:
@@ -428,14 +429,34 @@ class HostGatorPreviewDeploymentProvider:
             _domain_document_root(domain or {}), target.document_root,
         )
         files_present = False
+        public_files: tuple[str, ...] = ()
         warnings: list[str] = []
-        if root_matches:
+        staging_residual: bool | None
+        document_root_present: bool | None
+        try:
+            base_listing = self._client.list_files(_safe_remote_path(self._config.base_dir))
+            directories = _listed_directory_names(base_listing)
+            document_root_present = target.preview_slug in directories
+            staging_prefix = f".staging-{target.preview_slug}-"
+            staging_residual = any(
+                name.startswith(staging_prefix) for name in directories
+            )
+        except CPanelError as exc:
+            document_root_present = None
+            staging_residual = None
+            warnings.append(f"staging status unavailable: {exc.code}")
+        if document_root_present is True or root_matches:
             try:
                 listing = self._client.list_files(target.document_root)
                 names = _listed_file_names(listing)
                 files_present = {"index.html", "styles.css"} <= names
+                public_files = _listed_public_entries(listing)
+                document_root_present = True
             except CPanelError as exc:
-                warnings.append(f"file status unavailable: {exc.code}")
+                if exc.code == "not_found":
+                    document_root_present = False
+                else:
+                    warnings.append(f"file status unavailable: {exc.code}")
         ssl_status = self._ssl_status(target.fqdn)
         if ssl_status != "active":
             warnings.append("HTTPS certificate is not active")
@@ -443,7 +464,8 @@ class HostGatorPreviewDeploymentProvider:
         return DeploymentStatus(
             state, target.preview_slug, f"https://{target.fqdn}",
             configured, bool(root_matches), files_present,
-            ssl_status, tuple(warnings),
+            ssl_status, tuple(warnings), public_files, staging_residual,
+            document_root_present,
         )
 
     def target(self, preview_slug: str) -> TechnicalDeploymentTarget:
@@ -465,7 +487,7 @@ class HostGatorPreviewDeploymentProvider:
         try:
             return name in _listed_directory_names(self._client.list_files(parent))
         except CPanelError as exc:
-            if exc.code in {"not_found", "uapi_error"}:
+            if exc.code == "not_found":
                 return False
             raise
 
@@ -689,3 +711,10 @@ def _listed_directory_names(data: Any) -> set[str]:
         str(item.get("file")) for item in data.get("dirs", [])
         if isinstance(item, dict) and item.get("file")
     }
+
+
+def _listed_public_entries(data: Any) -> tuple[str, ...]:
+    """Return only names allowed at a preview root, never unrelated remote entries."""
+    files = _listed_file_names(data).intersection({"index.html", "styles.css"})
+    directories = _listed_directory_names(data).intersection({"assets"})
+    return tuple(sorted(files | {f"{name}/" for name in directories}))

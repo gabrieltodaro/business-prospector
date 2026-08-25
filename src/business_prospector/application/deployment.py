@@ -24,6 +24,9 @@ class DeploymentResult:
     deployment_id: str
     artifact_checksum: str
     warnings: tuple[str, ...] = ()
+    deployment_mode: str = "direct_first_publish"
+    cleanup: str = "manual_required"
+    uploaded_files: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +39,9 @@ class DeploymentResult:
             "deployment_id": self.deployment_id,
             "artifact_checksum": self.artifact_checksum,
             "warnings": list(self.warnings),
+            "deployment_mode": self.deployment_mode,
+            "cleanup": self.cleanup,
+            "uploaded_files": list(self.uploaded_files),
         }
 
 
@@ -49,6 +55,9 @@ class DeploymentStatus:
     expected_files_present: bool
     ssl_status: str
     warnings: tuple[str, ...] = ()
+    public_files: tuple[str, ...] = ()
+    staging_residual_present: bool | None = None
+    document_root_present: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +69,9 @@ class DeploymentStatus:
             "expected_files_present": self.expected_files_present,
             "ssl_status": self.ssl_status,
             "warnings": list(self.warnings),
+            "public_files": list(self.public_files),
+            "staging_residual_present": self.staging_residual_present,
+            "document_root_present": self.document_root_present,
         }
 
 
@@ -168,6 +180,12 @@ class SalesPreviewDeploymentService:
                 int(existing.get("files_uploaded") or 0), str(existing.get("domain_status") or "existing"),
                 str(existing.get("ssl_status") or "unknown"), str(existing.get("deployment_id") or ""),
                 checksum, ("unchanged artifact was already published",),
+                str(existing.get("deployment_mode") or "direct_first_publish"),
+                str(existing.get("cleanup") or "manual_required"),
+                tuple(
+                    item for item in existing.get("uploaded_files", [])
+                    if isinstance(item, str)
+                ),
             )
         result = self._provider.publish(draft.site_path, preview_slug)
         published_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
