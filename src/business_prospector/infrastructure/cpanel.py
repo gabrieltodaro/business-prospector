@@ -35,8 +35,11 @@ DOMAIN_PATTERN = re.compile(
 
 
 class CPanelError(Exception):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self, code: str, message: str, *, response_shape: Mapping[str, Any] | None = None,
+    ) -> None:
         self.code = code
+        self.response_shape = dict(response_shape) if response_shape else None
         super().__init__(message)
 
 
@@ -108,6 +111,7 @@ class HttpRequest:
 class HttpResponse:
     status: int
     body: bytes
+    content_type: str | None = None
 
 
 class HttpTransport(Protocol):
@@ -121,10 +125,13 @@ class UrllibHttpTransport:
                 request.url, data=request.body, headers=dict(request.headers), method=request.method,
             )
             with urlopen(raw, timeout=request.timeout) as response:
-                return HttpResponse(int(response.status), response.read())
+                return HttpResponse(
+                    int(response.status), response.read(), response.headers.get_content_type(),
+                )
         except HTTPError as exc:
             body = exc.read() if exc.fp else b""
-            return HttpResponse(int(exc.code), body)
+            content_type = exc.headers.get_content_type() if exc.headers else None
+            return HttpResponse(int(exc.code), body, content_type)
         except (URLError, TimeoutError, socket.timeout) as exc:
             timed_out = isinstance(exc, (TimeoutError, socket.timeout)) or isinstance(
                 getattr(exc, "reason", None), (TimeoutError, socket.timeout),
@@ -152,6 +159,12 @@ class CPanelUapiClient:
 
     def domains_data(self) -> Any:
         return self._get("DomainInfo", "domains_data", {"format": "list"})
+
+    def domains_data_diagnostic(self) -> tuple[Any, dict[str, Any]]:
+        """Use the documented default hash representation and retain only response shape."""
+        return self._request_with_shape(
+            "GET", "DomainInfo", "domains_data", {"format": "hash"}, None, None,
+        )
 
     def add_subdomain(self, slug: str, root_domain: str, document_root: str) -> Any:
         return self._get("SubDomain", "addsubdomain", {
@@ -204,6 +217,15 @@ class CPanelUapiClient:
         self, method: str, module: str, function: str, parameters: Mapping[str, str],
         body: bytes | None, content_type: str | None,
     ) -> Any:
+        data, _ = self._request_with_shape(
+            method, module, function, parameters, body, content_type,
+        )
+        return data
+
+    def _request_with_shape(
+        self, method: str, module: str, function: str, parameters: Mapping[str, str],
+        body: bytes | None, content_type: str | None,
+    ) -> tuple[Any, dict[str, Any]]:
         origin = self._config.base_url.rstrip("/")
         query = urlencode(parameters)
         url = f"{origin}/execute/{module}/{function}" + (f"?{query}" if query else "")
@@ -224,16 +246,23 @@ class CPanelUapiClient:
         try:
             payload = json.loads(response.body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            raise CPanelError("malformed_response", "cPanel returned malformed JSON") from None
+            shape = _safe_response_shape(response, None, json_parsed=False)
+            raise CPanelError(
+                "malformed_response", "cPanel returned malformed JSON", response_shape=shape,
+            ) from None
+        shape = _safe_response_shape(response, payload, json_parsed=True)
         result = payload.get("result") if isinstance(payload, dict) else None
         if not isinstance(result, dict):
-            raise CPanelError("malformed_response", "cPanel returned an invalid UAPI envelope")
+            raise CPanelError(
+                "malformed_response", "cPanel returned an invalid UAPI envelope",
+                response_shape=shape,
+            )
         if result.get("status") not in {1, True, "1"}:
             errors = result.get("errors")
             message = _safe_error_message(errors, self._config)
             code = _classify_uapi_error(message)
-            raise CPanelError(code, message)
-        return result.get("data")
+            raise CPanelError(code, message, response_shape=shape)
+        return result.get("data"), shape
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +274,7 @@ class CPanelConnectionResult:
     root_domain_present: bool | None
     domain_count: int | None
     error_code: str | None = None
+    response_shape: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -255,6 +285,7 @@ class CPanelConnectionResult:
             "root_domain_present": self.root_domain_present,
             "domain_count": self.domain_count,
             "error_code": self.error_code,
+            "response_shape": dict(self.response_shape) if self.response_shape else None,
         }
 
 
@@ -267,7 +298,7 @@ class CPanelConnectivityService:
 
     def test(self) -> CPanelConnectionResult:
         try:
-            records = _domain_records(self._client.domains_data())
+            data, response_shape = self._client.domains_data_diagnostic()
         except CPanelError as exc:
             reachable = exc.code not in {"network_failure", "timeout"}
             if exc.code == "authentication_failed":
@@ -280,7 +311,14 @@ class CPanelConnectivityService:
                 authenticated = None
             return CPanelConnectionResult(
                 True, reachable, authenticated, self._config.root_domain,
-                None, None, exc.code,
+                None, None, exc.code, exc.response_shape,
+            )
+        try:
+            records = _domain_records(data)
+        except CPanelError as exc:
+            return CPanelConnectionResult(
+                True, True, True, self._config.root_domain,
+                None, None, exc.code, response_shape,
             )
         root_present = any(
             str(record.get("domain") or record.get("servername") or "")
@@ -289,7 +327,7 @@ class CPanelConnectivityService:
         )
         return CPanelConnectionResult(
             True, True, True, self._config.root_domain,
-            root_present, len(records), None,
+            root_present, len(records), None, None,
         )
 
 
@@ -303,7 +341,9 @@ def cpanel_connection_test(
     except ValidationError:
         config = None
     if config is None:
-        return CPanelConnectionResult(False, False, None, None, None, None, "not_configured")
+        return CPanelConnectionResult(
+            False, False, None, None, None, None, "not_configured", None,
+        )
     return CPanelConnectivityService(config, CPanelUapiClient(config, transport)).test()
 
 
@@ -499,6 +539,51 @@ def _classify_uapi_error(message: str) -> str:
     if "not exist" in lowered or "not found" in lowered:
         return "not_found"
     return "uapi_error"
+
+
+def _safe_response_shape(
+    response: HttpResponse, payload: Any, *, json_parsed: bool,
+) -> dict[str, Any]:
+    """Describe only allowlisted UAPI structure; never copy response values."""
+    top_level_keys = {"apiversion", "func", "module", "result"}
+    result_keys = {"data", "errors", "messages", "metadata", "status", "warnings"}
+    result = payload.get("result") if isinstance(payload, dict) else None
+    media_type = (response.content_type or "").partition(";")[0].strip().casefold()
+    if not media_type:
+        safe_content_type: str | None = None
+    elif media_type == "application/json" or media_type.endswith("+json"):
+        safe_content_type = "application/json"
+    else:
+        safe_content_type = "other"
+    return {
+        "http_status": response.status,
+        "content_type": safe_content_type,
+        "json_parsed": json_parsed,
+        "top_level_type": _safe_json_type(payload) if json_parsed else None,
+        "top_level_keys": sorted(top_level_keys.intersection(payload))
+        if isinstance(payload, dict) else [],
+        "result_type": _safe_json_type(result) if json_parsed else None,
+        "result_keys": sorted(result_keys.intersection(result))
+        if isinstance(result, dict) else [],
+        "data_type": _safe_json_type(result.get("data"))
+        if isinstance(result, dict) else None,
+    }
+
+
+def _safe_json_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "other"
 
 
 def _domain_records(data: Any) -> tuple[Mapping[str, Any], ...]:
