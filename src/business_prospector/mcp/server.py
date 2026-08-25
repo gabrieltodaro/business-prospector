@@ -39,6 +39,7 @@ from business_prospector.infrastructure.cpanel import (
     CPanelError,
     CPanelUapiClient,
     HostGatorPreviewDeploymentProvider,
+    cpanel_connection_test as run_cpanel_connection_test,
     cpanel_configuration_status,
 )
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
@@ -491,6 +492,12 @@ def approve_sales_preview(
 def cpanel_status() -> dict[str, Any]:
     """Report only whether trusted runtime cPanel configuration is complete; never calls cPanel."""
     return _response("cpanel_status", cpanel_configuration_status())
+
+
+@mcp.tool()
+def cpanel_connection_test() -> dict[str, Any]:
+    """Run one safe, read-only cPanel connectivity and authentication diagnostic."""
+    return _response("cpanel_connection_test", run_cpanel_connection_test().to_dict())
 
 
 @mcp.tool()

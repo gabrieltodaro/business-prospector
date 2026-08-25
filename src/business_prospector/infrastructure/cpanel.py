@@ -126,8 +126,12 @@ class UrllibHttpTransport:
             body = exc.read() if exc.fp else b""
             return HttpResponse(int(exc.code), body)
         except (URLError, TimeoutError, socket.timeout) as exc:
-            reason = "timeout" if isinstance(exc, (TimeoutError, socket.timeout)) else "network failure"
-            raise CPanelError("network_failure", f"cPanel request failed: {reason}") from None
+            timed_out = isinstance(exc, (TimeoutError, socket.timeout)) or isinstance(
+                getattr(exc, "reason", None), (TimeoutError, socket.timeout),
+            )
+            code = "timeout" if timed_out else "network_failure"
+            reason = "timeout" if timed_out else "network failure"
+            raise CPanelError(code, f"cPanel request failed: {reason}") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +234,77 @@ class CPanelUapiClient:
             code = _classify_uapi_error(message)
             raise CPanelError(code, message)
         return result.get("data")
+
+
+@dataclass(frozen=True, slots=True)
+class CPanelConnectionResult:
+    configured: bool
+    reachable: bool
+    authenticated: bool | None
+    root_domain: str | None
+    root_domain_present: bool | None
+    domain_count: int | None
+    error_code: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "reachable": self.reachable,
+            "authenticated": self.authenticated,
+            "root_domain": self.root_domain,
+            "root_domain_present": self.root_domain_present,
+            "domain_count": self.domain_count,
+            "error_code": self.error_code,
+        }
+
+
+class CPanelConnectivityService:
+    """One-operation, read-only connectivity and authentication diagnostic."""
+
+    def __init__(self, config: CPanelDeploymentConfig, client: CPanelUapiClient) -> None:
+        self._config = config.validated()
+        self._client = client
+
+    def test(self) -> CPanelConnectionResult:
+        try:
+            records = _domain_records(self._client.domains_data())
+        except CPanelError as exc:
+            reachable = exc.code not in {"network_failure", "timeout"}
+            if exc.code == "authentication_failed":
+                authenticated: bool | None = False
+            elif exc.code in {
+                "already_exists", "forbidden_operation", "not_found", "uapi_error",
+            }:
+                authenticated = True
+            else:
+                authenticated = None
+            return CPanelConnectionResult(
+                True, reachable, authenticated, self._config.root_domain,
+                None, None, exc.code,
+            )
+        root_present = any(
+            str(record.get("domain") or record.get("servername") or "")
+            .casefold().rstrip(".") == self._config.root_domain
+            for record in records
+        )
+        return CPanelConnectionResult(
+            True, True, True, self._config.root_domain,
+            root_present, len(records), None,
+        )
+
+
+def cpanel_connection_test(
+    environment: Mapping[str, str] | None = None,
+    transport: HttpTransport | None = None,
+) -> CPanelConnectionResult:
+    """Build the trusted client and run exactly one read-only UAPI operation."""
+    try:
+        config = CPanelDeploymentConfig.from_environment(environment)
+    except ValidationError:
+        config = None
+    if config is None:
+        return CPanelConnectionResult(False, False, None, None, None, None, "not_configured")
+    return CPanelConnectivityService(config, CPanelUapiClient(config, transport)).test()
 
 
 @dataclass(frozen=True, slots=True)

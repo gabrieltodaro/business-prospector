@@ -17,12 +17,15 @@ from business_prospector.application.deployment import (
 from business_prospector.application.sales_preview import SalesPreviewLifecycleService
 from business_prospector.domain.exceptions import ValidationError
 from business_prospector.infrastructure.cpanel import (
+    CPanelConnectionResult,
+    CPanelConnectivityService,
     CPanelDeploymentConfig,
     CPanelError,
     CPanelUapiClient,
     HostGatorPreviewDeploymentProvider,
     HttpRequest,
     HttpResponse,
+    cpanel_connection_test,
     cpanel_configuration_status,
 )
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
@@ -67,6 +70,16 @@ class FakeTransport:
         if not self.responses:
             raise AssertionError(f"unexpected request: {request.method} {request.url}")
         return self.responses.pop(0)
+
+
+class FailingTransport:
+    def __init__(self, error: CPanelError) -> None:
+        self.error = error
+        self.requests: list[HttpRequest] = []
+
+    def send(self, request: HttpRequest) -> HttpResponse:
+        self.requests.append(request)
+        raise self.error
 
 
 def response(data: Any = None, *, status: int = 1, errors: Any = None) -> HttpResponse:
@@ -135,6 +148,122 @@ def test_client_normalizes_errors_and_redacts_token(
         client.domains_data()
     assert caught.value.code == code
     assert TOKEN not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "domains, expected_present",
+    [
+        ([{"domain": "gapps.test"}, {"domain": "customer.example"}], True),
+        ([{"domain": "one.example"}, {"servername": "two.example"}], False),
+    ],
+)
+def test_connectivity_service_returns_only_safe_domain_summary(
+    domains: list[dict[str, str]], expected_present: bool,
+) -> None:
+    transport = FakeTransport(response(domains))
+    result = CPanelConnectivityService(
+        config(), CPanelUapiClient(config(), transport),
+    ).test().to_dict()
+    assert result == {
+        "configured": True,
+        "reachable": True,
+        "authenticated": True,
+        "root_domain": "gapps.test",
+        "root_domain_present": expected_present,
+        "domain_count": 2,
+        "error_code": None,
+    }
+    serialized = json.dumps(result)
+    for private_value in (TOKEN, "prospector", "cpanel.example.test", "customer.example"):
+        assert private_value not in serialized
+    assert len(transport.requests) == 1
+    request = transport.requests[0]
+    assert request.method == "GET"
+    assert "/execute/DomainInfo/domains_data?format=list" in request.url
+    assert not any(operation in request.url for operation in (
+        "addsubdomain", "upload_files", "rename_file", "delete_file",
+    ))
+
+
+@pytest.mark.parametrize(
+    "transport, expected",
+    [
+        (
+            FakeTransport(HttpResponse(401, b"denied")),
+            (True, False, "authentication_failed"),
+        ),
+        (
+            FailingTransport(CPanelError("timeout", "cPanel request failed: timeout")),
+            (False, None, "timeout"),
+        ),
+        (
+            FailingTransport(CPanelError("network_failure", "cPanel request failed: network failure")),
+            (False, None, "network_failure"),
+        ),
+        (
+            FakeTransport(HttpResponse(200, b"not-json")),
+            (True, None, "malformed_response"),
+        ),
+        (
+            FakeTransport(response(None, status=0, errors=[f"token {TOKEN} forbidden"])),
+            (True, True, "forbidden_operation"),
+        ),
+        (
+            FakeTransport(response(None, status=0, errors=["unexpected operation failure"])),
+            (True, True, "uapi_error"),
+        ),
+    ],
+)
+def test_connectivity_service_returns_safe_structured_failures(
+    transport: FakeTransport | FailingTransport,
+    expected: tuple[bool, bool | None, str],
+) -> None:
+    result = cpanel_connection_test(environment(), transport).to_dict()
+    assert (result["reachable"], result["authenticated"], result["error_code"]) == expected
+    serialized = json.dumps(result)
+    assert TOKEN not in serialized
+    assert "prospector" not in serialized
+    assert "cpanel.example.test" not in serialized
+    assert len(transport.requests) == 1
+
+
+def test_connectivity_test_requires_complete_configuration_without_request() -> None:
+    transport = FakeTransport()
+    result = cpanel_connection_test({}, transport).to_dict()
+    assert result == {
+        "configured": False,
+        "reachable": False,
+        "authenticated": None,
+        "root_domain": None,
+        "root_domain_present": None,
+        "domain_count": None,
+        "error_code": "not_configured",
+    }
+    assert not transport.requests
+
+
+def test_cpanel_connection_mcp_tool_has_no_arguments_or_sqlite_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from business_prospector.mcp import server as mcp_server
+
+    source_path = Path(__file__).parents[1] / "src/business_prospector/mcp/server.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    function = next(
+        item for item in tree.body
+        if isinstance(item, ast.FunctionDef) and item.name == "cpanel_connection_test"
+    )
+    assert function.args.args == []
+    monkeypatch.setattr(
+        mcp_server, "run_cpanel_connection_test",
+        lambda: CPanelConnectionResult(True, True, True, "gapps.test", False, 2),
+    )
+    monkeypatch.setattr(
+        mcp_server, "_repository",
+        lambda: (_ for _ in ()).throw(AssertionError("SQLite must not be accessed")),
+    )
+    result = mcp_server.cpanel_connection_test()
+    assert result["data"]["reachable"] is True
 
 
 def test_domain_is_idempotent_when_document_root_matches() -> None:
