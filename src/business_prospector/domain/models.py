@@ -20,7 +20,8 @@ PIPELINE_STATUSES = (
     "new",
     "qualified",
     "needs_review",
-    "site_ready",
+    "internal_website",
+    "sales_preview",
     "contacted",
     "proposal",
     "closed",
@@ -28,7 +29,7 @@ PIPELINE_STATUSES = (
 )
 # `rejected` is retained for existing records; new dashboard movement uses
 # `discarded`, which describes a commercial pipeline decision more accurately.
-VALID_STATUSES = set(PIPELINE_STATUSES) | {"rejected"}
+VALID_STATUSES = set(PIPELINE_STATUSES) | {"rejected", "site_ready"}
 VALID_WHATSAPP_SOURCES = {"website_link", "google_business_phone", "manual", "unknown"}
 OPPORTUNITY_TYPES = {"redesign", "first_website"}
 ASSESSMENT_PERSISTENCE_STATUSES = {

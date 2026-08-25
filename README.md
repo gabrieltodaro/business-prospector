@@ -171,7 +171,13 @@ O fluxo separado de [oportunidades de primeiro site](docs/first-website.md) pesq
 
 Leads `first_website` qualificados podem alimentar a [geração local de primeiro site](docs/site-generation.md). O gerador produz HTML/CSS original para revisão interna, preserva fatos desconhecidos como pendências e não publica nem contata o prospect.
 
-Após geração e validação bem-sucedidas para um lead persistido, o pipeline move somente esse lead para `site_ready` (**Site Pronto**). O [dashboard](docs/dashboard.md) valida o artefato independentemente do status e oferece **Ver Site** em `/sites/<slug>/`, restrito ao servidor local.
+A geração visual 2.0 produz drafts comerciais mais completos e inclui proveniência explícita de assets. Imagens do website atual podem ser candidatas internas em redesign; redes sociais nunca são baixadas automaticamente e aprovação para draft nunca equivale a direito de publicação.
+
+Após geração e validação bem-sucedidas, o pipeline move o lead para `internal_website` (**Internal Website**): há um artefato válido para revisão da Gapps, mas ele ainda não está aprovado para uso comercial. **Sales Preview** (`sales_preview`) é uma etapa posterior e exige aprovação humana explícita de conteúdo e dos direitos de publicação de todos os assets. Ela não significa que houve contato com o prospect.
+
+O [dashboard](docs/dashboard.md) oferece **Ver Site** em `/sites/<slug>/`, restrito ao servidor local, mostra a prontidão calculada pelo Python e impede drag-and-drop de contornar a aprovação. A aprovação apenas registra metadata e propõe um identificador seguro para um futuro subdomínio Gapps; esta versão não publica, cria DNS nem faz outreach.
+
+A publicação controlada de Sales Preview possui agora um adapter [HostGator/cPanel UAPI](docs/cpanel-deployment.md). Ele usa exclusivamente HTTPS + API Token, transporte injetável e allowlist de artefatos; FTP e senha cPanel são proibidos. Publicação continua sendo uma ação humana separada, não altera o lead para Contatado e depende de configuração secreta do runtime. DNS não está implementado.
 
 ## Seguranca
 

@@ -8,7 +8,7 @@ from .first_website import FirstWebsiteMarketReport
 from .models import validate_http_url
 from .normalization import slugify
 
-SITE_STRATEGY_VERSION = "1.0"
+SITE_STRATEGY_VERSION = "2.0"
 
 
 def _optional_text(value: Any, field: str, maximum: int = 500) -> str | None:

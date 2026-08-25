@@ -86,7 +86,12 @@ def create_draft(application: DashboardApplication) -> tuple[Lead, Path]:
     result = SiteGenerationService(application.repository.database_path.parent / "sites").generate(
         payload["lead"], payload["research"],
     )
-    return stored, Path(result.site_path or "")
+    site = Path(result.site_path or "")
+    manifest_path = site / "site-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["opportunity_type"] = stored.opportunity_type
+    manifest_path.write_text(json.dumps(manifest))
+    return stored, site
 
 
 def test_lists_filters_and_returns_security_headers(application: DashboardApplication) -> None:
@@ -112,17 +117,62 @@ def test_status_only_update_persists_valid_pipeline_status(application: Dashboar
     assert application.repository.get(lead_id).status == "contacted"  # type: ignore[union-attr]
     assert statuses_code == 200
     assert json.loads(statuses_body)["statuses"] == [
-        "new", "qualified", "needs_review", "site_ready", "contacted", "proposal", "closed", "discarded"
+        "new", "qualified", "needs_review", "internal_website", "sales_preview",
+        "contacted", "proposal", "closed", "discarded"
     ]
 
 
-def test_drag_target_site_ready_persists_for_any_opportunity(application: DashboardApplication) -> None:
+def test_drag_target_internal_website_persists_for_any_opportunity(application: DashboardApplication) -> None:
     lead_id = application.repository.list()[0].id
     assert lead_id is not None
+    create_draft(application)
     with running_server(application) as address:
-        status, _, body = call(address, "PATCH", f"/api/leads/{lead_id}/status", {"status": "site_ready"})
-    assert status == 200 and json.loads(body)["lead"]["status"] == "site_ready"
+        status, _, body = call(address, "PATCH", f"/api/leads/{lead_id}/status", {"status": "internal_website"})
+    assert status == 200 and json.loads(body)["lead"]["status"] == "internal_website"
     assert application.repository.get(lead_id).opportunity_type == "redesign"  # type: ignore[union-attr]
+
+
+def test_drag_cannot_bypass_sales_preview_approval(application: DashboardApplication) -> None:
+    lead_id = application.repository.list()[0].id
+    assert lead_id is not None
+    application.repository.update(lead_id, {"status": "internal_website"})
+    with running_server(application) as address:
+        status, _, body = call(
+            address, "PATCH", f"/api/leads/{lead_id}/status", {"status": "sales_preview"},
+        )
+    assert status == 400 and b"explicit approval" in body
+    assert application.repository.get(lead_id).status == "internal_website"  # type: ignore[union-attr]
+
+
+def test_explicit_dashboard_approval_promotes_ready_internal_site(
+    application: DashboardApplication,
+) -> None:
+    stored, _ = create_draft(application)
+    application.repository.update(stored.id or 0, {"status": "internal_website"})
+    with running_server(application) as address:
+        status, _, body = call(address, "POST", f"/api/leads/{stored.id}/approve-sales-preview", {
+            "content_review_acknowledged": True,
+            "asset_keys_approved_for_publish": [],
+            "approved_by": "dashboard_human_review",
+        })
+    payload = json.loads(body)
+    assert status == 200 and payload["lead"]["status"] == "sales_preview"
+    assert payload["preview_status"] == "approved_not_published"
+
+
+def test_dashboard_approval_rejection_is_usable_and_preserves_status(
+    application: DashboardApplication,
+) -> None:
+    stored = application.repository.list()[0]
+    application.repository.update(stored.id or 0, {"status": "internal_website"})
+    with running_server(application) as address:
+        status, _, body = call(address, "POST", f"/api/leads/{stored.id}/approve-sales-preview", {
+            "content_review_acknowledged": True,
+            "asset_keys_approved_for_publish": [],
+            "approved_by": "dashboard_human_review",
+        })
+    assert status == 400 and b"valid generated site is required" in body
+    assert application.repository.get(stored.id or 0).status == "internal_website"  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize(
@@ -253,7 +303,11 @@ def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     assert "website_assessment" in source
     assert "(criterion.facts||[]).join" in source
     assert "Primeiro Site" in source
-    assert "site_ready','Site Pronto" in source
+    assert "internal_website','Internal Website" in source
+    assert "sales_preview','Sales Preview" in source
+    assert "Approve Sales Preview" in source
+    assert "approve-sales-preview" in source
+    assert "Website stage" in source
     assert "lead.site_draft?.exists" in source
     assert "Ver Site" in source
     assert "opportunity_type" in source

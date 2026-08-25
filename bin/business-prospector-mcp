@@ -22,6 +22,36 @@ if [ -z "${GOOGLE_MAPS_API_KEY:-}" ] && [ -r "$OPENCLAW_GATEWAY_ENV" ]; then
   fi
 fi
 
+# Recover only the allowlisted cPanel deployment settings. The token remains in
+# process memory and is never printed, persisted, or copied into plugin manifests.
+recover_service_value() {
+  service_name=$1
+  (
+    set +u
+    # shellcheck disable=SC1090 -- OpenClaw owns this per-user generated file.
+    . "$OPENCLAW_GATEWAY_ENV"
+    eval "printf '%s' \"\${$service_name:-}\""
+  )
+}
+
+if [ -r "$OPENCLAW_GATEWAY_ENV" ]; then
+  for service_name in \
+    BUSINESS_PROSPECTOR_CPANEL_BASE_URL \
+    BUSINESS_PROSPECTOR_CPANEL_USERNAME \
+    BUSINESS_PROSPECTOR_CPANEL_API_TOKEN \
+    BUSINESS_PROSPECTOR_PREVIEW_ROOT_DOMAIN \
+    BUSINESS_PROSPECTOR_PREVIEW_BASE_DIR
+  do
+    eval "service_current=\${$service_name:-}"
+    if [ -z "$service_current" ]; then
+      service_value=$(recover_service_value "$service_name")
+      if [ -n "$service_value" ]; then
+        export "$service_name=$service_value"
+      fi
+    fi
+  done
+fi
+
 if [ -n "${BUSINESS_PROSPECTOR_PYTHON:-}" ]; then
   PROSPECTOR_PYTHON=$BUSINESS_PROSPECTOR_PYTHON
 elif [ -x "$DEFAULT_PYTHON" ]; then
@@ -46,6 +76,19 @@ if [ "${1:-}" = "--check-google-places-env" ]; then
     exit 0
   fi
   echo "business-prospector Google Places environment: not configured" >&2
+  exit 78
+fi
+
+if [ "${1:-}" = "--check-cpanel-env" ]; then
+  if [ -n "${BUSINESS_PROSPECTOR_CPANEL_BASE_URL:-}" ] && \
+     [ -n "${BUSINESS_PROSPECTOR_CPANEL_USERNAME:-}" ] && \
+     [ -n "${BUSINESS_PROSPECTOR_CPANEL_API_TOKEN:-}" ] && \
+     [ -n "${BUSINESS_PROSPECTOR_PREVIEW_ROOT_DOMAIN:-}" ] && \
+     [ -n "${BUSINESS_PROSPECTOR_PREVIEW_BASE_DIR:-}" ]; then
+    echo "business-prospector cPanel environment: configured"
+    exit 0
+  fi
+  echo "business-prospector cPanel environment: not configured" >&2
   exit 78
 fi
 

@@ -147,7 +147,7 @@ def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
     assert updated.name == original.name
     assert updated.status == "proposal"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(leads)")}
     assert "ix_leads_name_city" in indexes
 
@@ -214,7 +214,33 @@ def test_schema_v4_adds_site_ready_without_mutating_existing_statuses(tmp_path: 
     updated = migrated.update(original.id or 0, {"status": "site_ready"})
     assert updated.status == "site_ready"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+
+
+def test_schema_v5_preserves_legacy_site_ready_and_adds_lifecycle_statuses(tmp_path: Path) -> None:
+    from business_prospector.infrastructure.sqlite_repository import ALL_LEAD_COLUMNS, SCHEMA
+
+    database = tmp_path / "v5.db"
+    repository = SQLiteLeadRepository(database)
+    original = repository.save(lead("Legacy site ready"))
+    columns = ", ".join(ALL_LEAD_COLUMNS)
+    old_schema = SCHEMA.replace(",'internal_website','sales_preview'", "")
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE leads SET status = 'site_ready' WHERE id = ?", (original.id,))
+        connection.execute("ALTER TABLE leads RENAME TO leads_current")
+        connection.executescript(old_schema)
+        connection.execute(
+            f"INSERT INTO leads ({columns}) SELECT {columns} FROM leads_current"
+        )
+        connection.execute("DROP TABLE leads_current")
+        connection.execute("PRAGMA user_version = 5")
+
+    migrated = SQLiteLeadRepository(database)
+    assert migrated.get(original.id or 0).status == "site_ready"  # type: ignore[union-attr]
+    assert migrated.update(original.id or 0, {"status": "internal_website"}).status == "internal_website"
+    assert migrated.update(original.id or 0, {"status": "sales_preview"}).status == "sales_preview"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_legacy_competitor_research_rows_load_as_benchmarks_without_migration(

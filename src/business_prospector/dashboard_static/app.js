@@ -2,7 +2,7 @@
 
 const STATUS = [
   ['new','Novo','#7a8ca8'],['qualified','Qualificado','#d66f4d'],['needs_review','Revisar','#a87525'],
-  ['site_ready','Site Pronto','#3f7f68'],['contacted','Contatado','#688c94'],['proposal','Proposta','#8b6fa2'],['closed','Fechado','#547b5d'],['discarded','Descartado','#99948a']
+  ['internal_website','Internal Website','#3f7f68'],['sales_preview','Sales Preview','#496f9a'],['contacted','Contatado','#688c94'],['proposal','Proposta','#8b6fa2'],['closed','Fechado','#547b5d'],['discarded','Descartado','#99948a']
 ];
 const labels = Object.fromEntries(STATUS.map(([key,label]) => [key,label]));
 const colors = Object.fromEntries(STATUS.map(([key,,color]) => [key,color]));
@@ -64,7 +64,7 @@ function makeColumn(status,label,color,visible) {
   column.addEventListener('drop',event=>{event.preventDefault();column.classList.remove('drop-target');moveLead(draggedId,status)});
   column.style.setProperty('--status-color',color); return column;
 }
-function visualStatus(status){return status==='rejected'?'discarded':status}
+function visualStatus(status){if(status==='rejected')return 'discarded';if(status==='site_ready')return 'internal_website';return status}
 function makeCard(lead) {
   const card=node('article','lead-card'); card.draggable=true; card.dataset.id=lead.id; card.style.setProperty('--status-color',colors[visualStatus(lead.status)]||colors.qualified);
   const top=node('div','card-top'); top.append(node('div','card-name',lead.name),node('span','score',lead.score));
@@ -77,6 +77,7 @@ function makeCard(lead) {
   addIndicator(indicators,lead.website_url?'Website':'Sem site',Boolean(lead.website_url),!lead.website_url); if(!hasContact(lead))addIndicator(indicators,'Sem contato',false,true);
   indicators.append(node('span','indicator on',`${lead.website_issue_count||0} issues`)); card.append(indicators);
   if(lead.site_draft?.exists){const action=siteLink(lead.site_draft.site_url,'Ver Site','site-action');action.addEventListener('click',event=>event.stopPropagation());card.append(action)}
+  if(visualStatus(lead.status)==='sales_preview')card.append(node('span','sales-preview-mark','Sales Preview'));
   card.addEventListener('click',()=>openDetail(lead)); card.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openDetail(lead)}});card.tabIndex=0;
   card.addEventListener('dragstart',()=>{draggedId=lead.id;card.classList.add('dragging')});card.addEventListener('dragend',()=>{draggedId=null;card.classList.remove('dragging');document.querySelectorAll('.drop-target').forEach(x=>x.classList.remove('drop-target'))});
   return card;
@@ -114,7 +115,18 @@ function openDetail(lead) {
     ])));
   }
   if(lead.site_draft?.exists){
-    content.append(detailSection('Site',[['Status','Site pronto'],['Gerado em',lead.site_draft.generated_at],['Slug',lead.site_draft.lead_slug],['Visualização',siteLink(lead.site_draft.site_url,'Ver Site')]]));
+    const stage=visualStatus(lead.status)==='sales_preview'?'Sales Preview':'Internal Website';
+    const readiness=lead.sales_preview_readiness||{};
+    content.append(detailSection('Website lifecycle',[
+      ['Website stage',stage],['Gerado em',lead.site_draft.generated_at],['Slug',lead.site_draft.lead_slug],
+      ['Informações pendentes',readiness.missing_information_count??0],['Assets',readiness.asset_count??0],
+      ['Assets sem aprovação publish',(readiness.assets_not_approved||[]).length],
+      ['Warnings',(readiness.warnings||[]).join(' · ')||'—'],['Visualização',siteLink(lead.site_draft.site_url,'Ver Site')]
+    ]));
+    if(visualStatus(lead.status)==='internal_website'){
+      const approve=node('button','approve-preview','Approve Sales Preview');
+      approve.addEventListener('click',()=>approveSalesPreview(lead));content.append(approve);
+    }
   }
   content.append(detailSection('Contatos', [['Telefone',lead.phone],['WhatsApp',lead.whatsapp],['Confirmado',lead.whatsapp_confirmed?'Sim':'Não'],['Fonte WhatsApp',lead.whatsapp_source],['E-mail',lead.email],['Instagram',externalLink(lead.instagram,'Abrir Instagram')]]));
   content.append(detailSection('Prospecção', [['Score',lead.score],['Status',labels[visualStatus(lead.status)]||lead.status],['Batch',lead.batch_id],['Fonte',lead.source],['Descoberto em',lead.discovered_at],['Última verificação',lead.last_checked_at]]));
@@ -123,6 +135,15 @@ function openDetail(lead) {
 function detailSection(title,rows){const section=node('section','detail-section');section.append(node('h3','',title));const dl=node('dl','');rows.forEach(([label,value])=>{const row=node('div','detail-row');row.append(node('dt','',label));const dd=node('dd','');if(value instanceof Node)dd.append(value);else dd.textContent=value===null||value===undefined||value===''?'—':String(value);row.append(dd);dl.append(row)});section.append(dl);return section}
 function externalLink(value,label){const url=safeUrl(value);if(!url)return node('span','',value?'URL não permitida':'—');const link=node('a','',label);link.href=url;link.target='_blank';link.rel='noopener noreferrer';return link}
 function siteLink(value,label,className=''){const link=node('a',className,label);link.href=value;link.target='_blank';link.rel='noopener noreferrer';return link}
+async function approveSalesPreview(lead){
+  const readiness=lead.sales_preview_readiness||{};
+  const summary=`Confirmo a revisão do conteúdo e a aprovação pública dos assets elegíveis.\n\nSlug: ${lead.site_draft?.lead_slug||'—'}\nGerado em: ${lead.site_draft?.generated_at||'—'}\nInformações pendentes: ${readiness.missing_information_count||0}\nAssets: ${readiness.asset_count||0}\nAssets a aprovar: ${(readiness.assets_not_approved||[]).length}`;
+  if(!window.confirm(summary))return;
+  try{
+    await request(`/api/leads/${lead.id}/approve-sales-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content_review_acknowledged:true,asset_keys_approved_for_publish:readiness.assets_not_approved||[],approved_by:'dashboard_human_review'})});
+    closeDetail();await load();showToast('Sales Preview aprovado');
+  }catch(error){showToast(error.message,true)}
+}
 function closeDetail(){el('inspector').classList.remove('open');el('inspector').setAttribute('aria-hidden','true');el('scrim').hidden=true}
 function showToast(message,error=false){const toast=el('toast');toast.textContent=message;toast.className=`toast ${error?'error':''}`;toast.hidden=false;clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>toast.hidden=true,2600)}
 

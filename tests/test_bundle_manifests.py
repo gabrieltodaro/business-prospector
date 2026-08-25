@@ -101,7 +101,36 @@ def test_launcher_recovers_only_google_key_from_openclaw_service_env(tmp_path: P
     assert "UNRELATED_PRIVATE_VALUE" not in result.stdout + result.stderr
 
 
+def test_launcher_recovers_allowlisted_cpanel_environment_without_printing_token(
+    tmp_path: Path,
+) -> None:
+    service_env = tmp_path / ".openclaw" / "service-env" / "ai.openclaw.gateway.env"
+    service_env.parent.mkdir(parents=True)
+    service_env.write_text(
+        "BUSINESS_PROSPECTOR_CPANEL_BASE_URL='https://cpanel.example.test:2083'\n"
+        "BUSINESS_PROSPECTOR_CPANEL_USERNAME='prospector'\n"
+        "BUSINESS_PROSPECTOR_CPANEL_API_TOKEN='test-token-must-not-print'\n"
+        "BUSINESS_PROSPECTOR_PREVIEW_ROOT_DOMAIN='gapps.test'\n"
+        "BUSINESS_PROSPECTOR_PREVIEW_BASE_DIR='public_html/sales-previews'\n"
+        "UNRELATED_PRIVATE_VALUE='must-not-be-forwarded'\n",
+        encoding="utf-8",
+    )
+    env = {
+        "HOME": str(tmp_path), "PATH": os.environ.get("PATH", ""),
+        "BUSINESS_PROSPECTOR_PYTHON": os.sys.executable,
+    }
+    result = subprocess.run(
+        [str(ROOT / "bin" / "business-prospector-mcp"), "--check-cpanel-env"],
+        cwd=ROOT, env=env, check=True, capture_output=True, text=True,
+    )
+    output = result.stdout + result.stderr
+    assert result.stdout.strip() == "business-prospector cPanel environment: configured"
+    assert "test-token-must-not-print" not in output
+    assert "UNRELATED_PRIVATE_VALUE" not in output
+
+
 def test_manifests_do_not_claim_unsupported_ambient_env_interpolation() -> None:
     for name in (".mcp.json", "mcp.json"):
         raw = (ROOT / name).read_text(encoding="utf-8")
         assert "${GOOGLE_MAPS_API_KEY}" not in raw
+        assert "CPANEL_API_TOKEN" not in raw

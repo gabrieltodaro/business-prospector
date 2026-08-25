@@ -10,6 +10,7 @@ from importlib.resources.abc import Traversable
 from mcp.server.fastmcp import FastMCP
 
 from business_prospector.application.config import ProspectingConfig
+from business_prospector.application.deployment import SalesPreviewDeploymentService
 from business_prospector.application.batch import BatchProspectingService
 from business_prospector.application.first_website import FirstWebsiteProspectingService
 from business_prospector.application.ports import SearchQuery
@@ -18,7 +19,10 @@ from business_prospector.application.site_generation import (
     PersistedSiteGenerationWorkflow,
     SiteGenerationService,
     controlled_sites_root,
+    validate_generated_site,
 )
+from business_prospector.application.site_assets import SiteAssetCandidateValidator
+from business_prospector.application.sales_preview import SalesPreviewLifecycleService
 from business_prospector.domain.exceptions import ProspectorError
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
 from business_prospector.domain.scoring import calculate_score
@@ -30,6 +34,13 @@ from business_prospector.infrastructure.fake_providers import (
     FakeWebsiteAssessmentProvider,
 )
 from business_prospector.infrastructure.google_places import GooglePlacesBusinessDiscoveryProvider
+from business_prospector.infrastructure.cpanel import (
+    CPanelDeploymentConfig,
+    CPanelError,
+    CPanelUapiClient,
+    HostGatorPreviewDeploymentProvider,
+    cpanel_configuration_status,
+)
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
 from business_prospector.package_resources import default_config_resource, fake_dentists_resource
 
@@ -55,6 +66,17 @@ def _repository() -> SQLiteLeadRepository:
 
 def _sites_root() -> Path:
     return controlled_sites_root(_data_dir())
+
+
+def _deployment_service() -> SalesPreviewDeploymentService:
+    config = CPanelDeploymentConfig.from_environment()
+    if config is None:
+        raise ValueError("cPanel deployment is not configured")
+    client = CPanelUapiClient(config)
+    provider = HostGatorPreviewDeploymentProvider(config, client)
+    return SalesPreviewDeploymentService(
+        _repository(), SiteDraftService(_sites_root()), provider,
+    )
 
 
 def _response(action: str, data: Any = None, error: str | None = None) -> dict[str, Any]:
@@ -185,6 +207,16 @@ def update_lead(
     try:
         changes = {key: value for key, value in locals().items() if key != "lead_id" and value is not None}
         repository = _repository()
+        current = repository.get(lead_id)
+        if current is None:
+            raise ValueError("lead not found")
+        if status in {"sales_preview", "site_ready"}:
+            raise ValueError("website lifecycle status requires its controlled application operation")
+        if status == "internal_website":
+            draft = SiteDraftService(_sites_root()).inspect(current.slug or "")
+            if not draft.exists or draft.site_path is None:
+                raise ValueError("Internal Website requires a valid generated site")
+            validate_generated_site(draft.site_path)
         lead = repository.update(lead_id, changes)
         config = ProspectingConfig.from_resource(_config_resource())
         if lead.opportunity_type == "first_website" and lead.market_research is not None:
@@ -392,7 +424,7 @@ def qualify_and_save_first_website_candidate(
 def generate_first_website_draft(
     lead: dict[str, Any], research: dict[str, Any], overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Generate a persisted qualified lead draft, then mark it site_ready."""
+    """Generate a persisted qualified lead draft, then mark it internal_website."""
     try:
         lead_id = lead.get("id") if isinstance(lead, dict) else None
         repository = _repository()
@@ -405,6 +437,87 @@ def generate_first_website_draft(
     except (ProspectorError, TypeError, ValueError, OSError) as exc:
         LOGGER.warning("generate_first_website_draft failed: %s", exc)
         return _response("generate_first_website_draft", error=str(exc))
+
+
+@mcp.tool()
+def validate_site_asset_candidates(
+    lead: dict[str, Any], candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Classify observed image candidates without downloading or granting publish rights."""
+    try:
+        result = SiteAssetCandidateValidator().validate(lead, candidates)
+        return _response("validate_site_asset_candidates", result.to_dict())
+    except (ProspectorError, TypeError, ValueError) as exc:
+        return _response("validate_site_asset_candidates", error=str(exc))
+
+
+@mcp.tool()
+def get_sales_preview_readiness(lead_id: int) -> dict[str, Any]:
+    """Evaluate a persisted lead and local artifact; never deploys or changes status."""
+    try:
+        repository = _repository()
+        lead = repository.get(lead_id)
+        if lead is None:
+            raise ValueError("lead not found")
+        result = SalesPreviewLifecycleService(
+            repository, SiteDraftService(_sites_root()),
+        ).readiness(lead)
+        return _response("get_sales_preview_readiness", result.to_dict())
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("get_sales_preview_readiness", error=str(exc))
+
+
+@mcp.tool()
+def approve_sales_preview(
+    lead_id: int, content_review_acknowledged: bool,
+    asset_keys_approved_for_publish: list[str], approved_by: str,
+) -> dict[str, Any]:
+    """Explicitly approve a validated internal website; never publishes it."""
+    try:
+        repository = _repository()
+        approval = SalesPreviewLifecycleService(
+            repository, SiteDraftService(_sites_root()),
+        ).approve(
+            lead_id, content_review_acknowledged=content_review_acknowledged,
+            asset_keys_approved_for_publish=asset_keys_approved_for_publish,
+            approved_by=approved_by,
+        )
+        return _response("approve_sales_preview", approval.to_dict())
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("approve_sales_preview", error=str(exc))
+
+
+@mcp.tool()
+def cpanel_status() -> dict[str, Any]:
+    """Report only whether trusted runtime cPanel configuration is complete; never calls cPanel."""
+    return _response("cpanel_status", cpanel_configuration_status())
+
+
+@mcp.tool()
+def sales_preview_deployment_status(lead_id: int) -> dict[str, Any]:
+    """Read deployment state through the configured provider; never accepts infrastructure settings."""
+    try:
+        return _response(
+            "sales_preview_deployment_status", _deployment_service().status(lead_id).to_dict(),
+        )
+    except (ProspectorError, CPanelError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        LOGGER.warning("sales preview deployment status failed: %s", exc)
+        return _response("sales_preview_deployment_status", error=str(exc))
+
+
+@mcp.tool()
+def publish_sales_preview(
+    lead_id: int, explicitly_authorized: bool,
+) -> dict[str, Any]:
+    """Publish one approved Sales Preview after explicit human authorization; never changes lead status."""
+    try:
+        result = _deployment_service().publish(
+            lead_id, explicitly_authorized=explicitly_authorized,
+        )
+        return _response("publish_sales_preview", result.to_dict())
+    except (ProspectorError, CPanelError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        LOGGER.warning("sales preview publication failed: %s", exc)
+        return _response("publish_sales_preview", error=str(exc))
 
 
 @mcp.tool()

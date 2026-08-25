@@ -20,4 +20,6 @@ class LeadStatusService:
             raise ValidationError("lead_id must be a positive integer")
         if status not in PIPELINE_STATUSES:
             raise ValidationError(f"invalid pipeline status: {status}")
+        if status == "sales_preview":
+            raise ValidationError("Sales Preview requires explicit approval")
         return self._repository.update(lead_id, {"status": status})

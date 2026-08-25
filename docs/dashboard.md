@@ -1,10 +1,12 @@
 # Dashboard Kanban local
 
-## Site Pronto
+## Website lifecycle
 
-O Kanban possui a etapa `site_ready`, apresentada como **Site Pronto**, entre Revisar e Contatado. Ela é independente de `opportunity_type`: tanto Primeiro Site quanto Redesign podem ocupar essa coluna.
+O Kanban possui **Internal Website** (`internal_website`) e **Sales Preview** (`sales_preview`) entre Revisar e Contatado. Ambas servem a Primeiro Site e Redesign.
 
-Quando `generate_first_website_draft` conclui geração e validação para um lead persistido qualificado, o status muda para `site_ready`. Falhas e conflitos não alteram o lead. Drag-and-drop manual para dentro ou fora da coluna continua permitido.
+Geração bem-sucedida promove um lead qualificado somente a **Internal Website**. Isso significa que existe um site válido para revisão interna, ainda sujeito a warnings, revisão visual e assets liberados apenas para draft. Falhas e conflitos preservam o status anterior.
+
+**Sales Preview** significa que uma pessoa revisou o conteúdo visível e aprovou explicitamente os assets para publicação. A ação **Approve Sales Preview** executa a regra no backend; drag-and-drop para essa coluna é rejeitado e o card volta à origem. A aprovação não publica o site e não significa `contacted`.
 
 O dashboard consulta `SiteDraftService` para cada slug. O status sozinho não prova que existe site: o botão **Ver Site** aparece somente quando estrutura e `site-manifest.json` são válidos. A API expõe metadata segura, nunca o path absoluto.
 
@@ -16,7 +18,7 @@ http://127.0.0.1:8765/sites/<lead-slug>/
 
 Somente `index.html`, `styles.css` e arquivos regulares sob `assets/` são servidos. Slugs inválidos, traversal normal ou codificado, symlinks externos, manifestos, SQLite, config e arquivos de ambiente retornam 404. Não há listagem de diretórios. Consulte [pathlib](https://docs.python.org/3/library/pathlib.html), [http.server](https://docs.python.org/3/library/http.server.html) e [urllib.parse](https://docs.python.org/3/library/urllib.parse.html).
 
-Sites gerados antes da atualização não provocam atualização automática do banco. Para reconciliar um lead, confirme o botão **Ver Site** e arraste somente aquele card para **Site Pronto**.
+Sites gerados antes da atualização não provocam atualização automática do banco. O legado `site_ready` permanece legível e aparece como **Internal Website**, sem reescrita silenciosa. Para reconciliar outro lead, confirme **Ver Site**; só então mova aquele card para **Internal Website**. Não aprove Sales Preview sem a revisão comercial.
 
 ## Arquitetura e estado
 
@@ -63,19 +65,20 @@ As colunas persistidas sao:
 - `new` — Novo;
 - `qualified` — Qualificado;
 - `needs_review` — Revisar;
-- `site_ready` — Site Pronto;
+- `internal_website` — Internal Website;
+- `sales_preview` — Sales Preview;
 - `contacted` — Contatado;
 - `proposal` — Proposta;
 - `closed` — Fechado;
 - `discarded` — Descartado.
 
-`rejected` continua aceito apenas para compatibilidade com registros antigos e e exibido em Descartado. As novas movimentacoes usam `discarded`. A migracao SQLite v4 -> v5 preserva os leads, amplia o `CHECK` de status e nao altera o status de nenhuma linha.
+`site_ready` e `rejected` continuam aceitos apenas para compatibilidade; visualmente aparecem em Internal Website e Descartado, respectivamente. Novas gravações usam os status atuais. A migração SQLite v5 -> v6 amplia o `CHECK` sem alterar nenhuma linha existente.
 
 Cada card mostra empresa, cidade, categoria, score persistido, rating, numero de avaliacoes, motivo de qualificacao, quantidade de issues e indicadores de website/WhatsApp/telefone/e-mail. A ordenacao prioriza score e avaliacoes. Busca, cidade, categoria e score minimo filtram a visualizacao em memoria; a API tambem aceita `status`, `city`, `category` e `min_score` em `GET /api/leads`.
 
 O painel lateral e read-only e apresenta dados do negocio, Maps/Place ID, website, motivo e flags do assessment, contatos, score/status/fonte e timestamps. Para `first_website`, tambem mostra benchmark market, benchmarks utilizados, rating/reviews, facts, features comuns, inferences, recommendations e confidence persistidos no report validado. O breakdown do score nao e persistido nem recalculado no JavaScript.
 
-A unica escrita e:
+Uma escrita comum é:
 
 ```http
 PATCH /api/leads/{id}/status
@@ -84,7 +87,7 @@ Content-Type: application/json
 {"status":"contacted"}
 ```
 
-O backend aceita exatamente esse campo, valida ID e status pelo dominio e atualiza pelo repositorio existente. Em falha, o frontend restaura a coluna anterior e mostra um aviso. Nao ha edicao geral, exclusao, SQL no browser, outreach, proposta/contrato financeiro ou prospeccao disparada pela UI.
+O backend aceita exatamente esse campo, valida ID e status pelo domínio e atualiza pelo repositório existente. `internal_website` exige artefato válido; `sales_preview` nunca é aceito por essa rota. A rota separada de aprovação exige confirmação de conteúdo, lista explícita de assets e identidade do revisor, revalida o artefato e grava no manifesto `preview_slug`, `preview_status=approved_not_published`, `preview_url=null`, horário e revisor. Em falha, o frontend preserva o estado e mostra razões determinísticas. Não há deploy, outreach ou edição geral.
 
 ## Seguranca
 
@@ -117,7 +120,7 @@ Entao abra `http://127.0.0.1:8765` no proprio Mac Mini (ou use um tunel delibera
 ## Limites atuais
 
 - sem autenticacao ou hosting publico;
-- sem edicao ou aprovacao formal do site dentro do dashboard;
+- aprovação de Sales Preview é simples e explícita; não há workflow editorial complexo;
 - sem fatos/inferencias Playwright ou breakdown de score persistidos;
 - sem batch prospecting, outreach, edicao geral ou delete;
 - a interface nao inicia Places, Playwright ou MCP; ela apenas opera leads ja persistidos.

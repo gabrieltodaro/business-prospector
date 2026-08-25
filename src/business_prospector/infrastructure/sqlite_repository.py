@@ -13,7 +13,7 @@ from business_prospector.domain.normalization import normalize_address, normaliz
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.domain.first_website import FirstWebsiteMarketReport
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 LEAD_COLUMNS = (
     "id", "external_place_id", "slug", "name", "normalized_name", "category", "city",
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS leads (
     website_issue_count INTEGER NOT NULL DEFAULT 0,
     qualification_reason TEXT NOT NULL DEFAULT '',
     score INTEGER NOT NULL DEFAULT 0 CHECK (score >= 0 AND score <= 100),
-    status TEXT NOT NULL DEFAULT 'qualified' CHECK (status IN ('new','qualified','needs_review','site_ready','contacted','proposal','closed','discarded','rejected')),
+    status TEXT NOT NULL DEFAULT 'qualified' CHECK (status IN ('new','qualified','needs_review','internal_website','sales_preview','site_ready','contacted','proposal','closed','discarded','rejected')),
     source TEXT NOT NULL,
     discovered_at TEXT NOT NULL,
     last_checked_at TEXT NOT NULL,
@@ -117,7 +117,12 @@ class SQLiteLeadRepository:
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'leads'"
             ).fetchone()[0]
             if "site_ready" not in table_sql:
-                self._migrate_site_ready(connection)
+                self._migrate_pipeline_statuses(connection, "site_ready")
+                table_sql = connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'leads'"
+                ).fetchone()[0]
+            if "internal_website" not in table_sql or "sales_preview" not in table_sql:
+                self._migrate_pipeline_statuses(connection, "website_lifecycle")
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     @staticmethod
@@ -156,14 +161,15 @@ class SQLiteLeadRepository:
         connection.execute("ALTER TABLE leads ADD COLUMN market_research_checked_at TEXT")
 
     @staticmethod
-    def _migrate_site_ready(connection: sqlite3.Connection) -> None:
+    def _migrate_pipeline_statuses(connection: sqlite3.Connection, suffix: str) -> None:
         columns = ", ".join(ALL_LEAD_COLUMNS)
-        connection.execute("ALTER TABLE leads RENAME TO leads_before_site_ready")
+        legacy_table = f"leads_before_{suffix}"
+        connection.execute(f"ALTER TABLE leads RENAME TO {legacy_table}")  # noqa: S608
         connection.executescript(SCHEMA)
         connection.execute(
-            f"INSERT INTO leads ({columns}) SELECT {columns} FROM leads_before_site_ready"  # noqa: S608
+            f"INSERT INTO leads ({columns}) SELECT {columns} FROM {legacy_table}"  # noqa: S608
         )
-        connection.execute("DROP TABLE leads_before_site_ready")
+        connection.execute(f"DROP TABLE {legacy_table}")  # noqa: S608
         connection.executescript(SCHEMA)
 
     @property

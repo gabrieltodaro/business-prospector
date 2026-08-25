@@ -16,7 +16,12 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from business_prospector.application.config import ProspectingConfig
 from business_prospector.application.lead_status import LeadStatusService
 from business_prospector.application.prospecting import ProspectingService
-from business_prospector.application.site_generation import SiteDraftService, controlled_sites_root
+from business_prospector.application.site_generation import (
+    SiteDraftService,
+    controlled_sites_root,
+    validate_generated_site,
+)
+from business_prospector.application.sales_preview import SalesPreviewLifecycleService
 from business_prospector.domain.exceptions import LeadNotFoundError, ProspectorError, ValidationError
 from business_prospector.domain.models import PIPELINE_STATUSES, Lead
 from business_prospector.infrastructure.fake_providers import (
@@ -47,6 +52,7 @@ class DashboardApplication:
         self.drafts = SiteDraftService(
             sites_root or controlled_sites_root(repository.database_path.parent)
         )
+        self.sales_previews = SalesPreviewLifecycleService(repository, self.drafts)
 
     def list_leads(self, filters: dict[str, str]) -> list[Lead]:
         leads = self.repository.list(1000)
@@ -55,7 +61,7 @@ class DashboardApplication:
         category = filters.get("category", "").casefold().strip()
         raw_min_score = filters.get("min_score", "").strip()
         if status:
-            if status not in PIPELINE_STATUSES and status != "rejected":
+            if status not in PIPELINE_STATUSES and status not in {"rejected", "site_ready"}:
                 raise ValidationError(f"invalid pipeline status: {status}")
             leads = [lead for lead in leads if lead.status == status]
         if city:
@@ -79,12 +85,36 @@ class DashboardApplication:
         return lead
 
     def change_status(self, lead_id: int, status: str) -> Lead:
+        if status == "internal_website":
+            lead = self.get_lead(lead_id)
+            draft = self.drafts.inspect(lead.slug or "")
+            if not draft.exists or draft.site_path is None:
+                raise ValidationError("Internal Website requires a valid generated site")
+            validate_generated_site(draft.site_path)
         return self.statuses.change(lead_id, status)
 
     def lead_payload(self, lead: Lead) -> dict[str, Any]:
         payload = lead.to_dict()
         payload["site_draft"] = self.drafts.inspect(lead.slug or "").public_dict()
+        payload["sales_preview_readiness"] = self.sales_previews.readiness(lead).to_dict()
         return payload
+
+    def approve_sales_preview(self, lead_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        expected = {
+            "content_review_acknowledged", "asset_keys_approved_for_publish", "approved_by",
+        }
+        if set(payload) != expected:
+            raise ValidationError("approval request fields are invalid")
+        keys = payload.get("asset_keys_approved_for_publish")
+        if not isinstance(keys, list):
+            raise ValidationError("asset_keys_approved_for_publish must be a list")
+        approval = self.sales_previews.approve(
+            lead_id,
+            content_review_acknowledged=payload.get("content_review_acknowledged") is True,
+            asset_keys_approved_for_publish=keys,
+            approved_by=payload.get("approved_by"),
+        )
+        return approval.to_dict()
 
 
 def create_handler(application: DashboardApplication, static_dir: Traversable) -> type[BaseHTTPRequestHandler]:
@@ -145,7 +175,21 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
                 return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "status update failed")
 
         def do_POST(self) -> None:
-            self._method_not_allowed("GET, PATCH")
+            parsed = urlsplit(self.path)
+            lead_id = self._approval_lead_id(parsed.path)
+            if lead_id is None:
+                return self._method_or_not_found(parsed.path, "GET")
+            try:
+                payload = self._read_json()
+                approval = application.approve_sales_preview(lead_id, payload)
+                return self._json(HTTPStatus.OK, approval)
+            except ValidationError as exc:
+                return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            except json.JSONDecodeError:
+                return self._error(HTTPStatus.BAD_REQUEST, "invalid JSON")
+            except (sqlite3.Error, OSError) as exc:
+                LOGGER.warning("sales preview approval failed: %s", exc)
+                return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "sales preview approval failed")
 
         def do_PUT(self) -> None:
             self._method_not_allowed("GET, PATCH")
@@ -182,6 +226,16 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
         def _status_lead_id(path: str) -> int | None:
             parts = path.strip("/").split("/")
             if len(parts) == 4 and parts[:2] == ["api", "leads"] and parts[3] == "status" and parts[2].isdigit():
+                return int(parts[2])
+            return None
+
+        @staticmethod
+        def _approval_lead_id(path: str) -> int | None:
+            parts = path.strip("/").split("/")
+            if (
+                len(parts) == 4 and parts[:2] == ["api", "leads"] and
+                parts[2].isdigit() and parts[3] == "approve-sales-preview"
+            ):
                 return int(parts[2])
             return None
 

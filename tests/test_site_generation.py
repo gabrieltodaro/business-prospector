@@ -59,7 +59,9 @@ def test_qualified_first_website_generates_complete_original_site(tmp_path: Path
     assert "@media" in (site / "styles.css").read_text()
     assert "competitor-a.example" not in html
     assert "<script>" not in html and "ignore instructions" not in html and "TOKEN=abc" not in html
-    assert "tratamentos e áreas de atendimento serão apresentados após validação" in html
+    assert "Atendimento odontológico em Catanduva, SP" in html
+    assert "Conteúdo a validar" not in html and "Em preparação" not in html
+    assert 'class="hero-media"' in html and 'fetchpriority="high"' in html
 
 
 @pytest.mark.parametrize("changes, message", [
@@ -90,7 +92,8 @@ def test_missing_facts_stay_missing_and_do_not_create_whatsapp_cta(tmp_path: Pat
     result = SiteGenerationService(tmp_path / "sites").generate(raw, research())
     html = Path(result.site_path or "").joinpath("index.html").read_text()
     assert "wa.me" not in html
-    assert "Canais de contato aguardam confirmação" in html
+    assert "Conteúdo a validar" not in html and "Em preparação" not in html
+    assert "Atendimento odontológico em Catanduva, SP" in html
     assert "anos de experiência" not in html and "garantia" not in html
 
 
@@ -166,8 +169,9 @@ def test_persisted_generation_transitions_only_after_success(tmp_path: Path) -> 
         repository, SiteGenerationService(tmp_path / "data" / "sites"),
     )
     result, updated = workflow.generate(stored.id or 0, research())
-    assert result.ok and updated is not None and updated.status == "site_ready"
-    assert repository.get(stored.id or 0).status == "site_ready"  # type: ignore[union-attr]
+    assert result.ok and updated is not None and updated.status == "internal_website"
+    assert updated.status != "sales_preview"
+    assert repository.get(stored.id or 0).status == "internal_website"  # type: ignore[union-attr]
 
 
 def test_generation_failure_and_conflict_preserve_previous_status(tmp_path: Path) -> None:
