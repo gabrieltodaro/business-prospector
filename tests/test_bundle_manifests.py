@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 from pathlib import Path
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENT_PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
@@ -44,6 +48,20 @@ def test_openclaw_2026_7_1_claude_fallback_loads_same_server() -> None:
     assert server["command"] == "${CLAUDE_PLUGIN_ROOT}/bin/business-prospector-mcp"
     assert "type" not in server
     assert "GOOGLE_MAPS_API_KEY" not in server["env"]
+
+
+def test_bundle_mcp_commands_use_the_executable_launcher_not_python() -> None:
+    launcher = ROOT / "bin" / "business-prospector-mcp"
+    assert os.access(launcher, os.X_OK)
+
+    agent_server = read_json("mcp.json")["mcpServers"]["business-prospector"]
+    claude_server = read_json(".mcp.json")["mcpServers"]["business-prospector"]
+    assert agent_server["command"] == "./bin/business-prospector-mcp"
+    assert claude_server["command"] == "${CLAUDE_PLUGIN_ROOT}/bin/business-prospector-mcp"
+    for server in (agent_server, claude_server):
+        command = server["command"].lower()
+        assert "python" not in command
+        assert server["args"] == []
 
 
 def test_launcher_uses_explicit_python_without_developer_venv(tmp_path: Path) -> None:
@@ -134,3 +152,43 @@ def test_manifests_do_not_claim_unsupported_ambient_env_interpolation() -> None:
         raw = (ROOT / name).read_text(encoding="utf-8")
         assert "${GOOGLE_MAPS_API_KEY}" not in raw
         assert "CPANEL_API_TOKEN" not in raw
+
+
+def test_openclaw_stdio_path_reaches_launcher_and_cpanel_status(tmp_path: Path) -> None:
+    """Exercise the compatibility manifest -> launcher -> MCP tool boundary."""
+    service_env = tmp_path / ".openclaw" / "service-env" / "ai.openclaw.gateway.env"
+    service_env.parent.mkdir(parents=True)
+    service_env.write_text(
+        "BUSINESS_PROSPECTOR_CPANEL_BASE_URL='https://cpanel.example.test:2083'\n"
+        "BUSINESS_PROSPECTOR_CPANEL_USERNAME='test-user'\n"
+        "BUSINESS_PROSPECTOR_CPANEL_API_TOKEN='test-only-token'\n"
+        "BUSINESS_PROSPECTOR_PREVIEW_ROOT_DOMAIN='preview.example.test'\n"
+        "BUSINESS_PROSPECTOR_PREVIEW_BASE_DIR='public_html/previews'\n",
+        encoding="utf-8",
+    )
+    server = read_json(".mcp.json")["mcpServers"]["business-prospector"]
+    command = server["command"].replace("${CLAUDE_PLUGIN_ROOT}", str(ROOT))
+    cwd = server["cwd"].replace("${CLAUDE_PLUGIN_ROOT}", str(ROOT))
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": os.environ.get("PATH", ""),
+        "BUSINESS_PROSPECTOR_PYTHON": os.sys.executable,
+        "BUSINESS_PROSPECTOR_CONFIG": str(ROOT / "config" / "default.json"),
+        "BUSINESS_PROSPECTOR_DATA_DIR": str(tmp_path / "data"),
+    }
+
+    async def call_status() -> dict[str, object] | None:
+        parameters = StdioServerParameters(command=command, args=server["args"], cwd=cwd, env=env)
+        async with stdio_client(parameters) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool("cpanel_status", {})
+                return result.structuredContent
+
+    result = asyncio.run(call_status())
+    assert result is not None
+    assert result["ok"] is True
+    assert result["data"] == {
+        "configured": True,
+        "root_domain": "preview.example.test",
+    }
