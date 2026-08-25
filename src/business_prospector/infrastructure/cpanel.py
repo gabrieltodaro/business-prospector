@@ -20,6 +20,7 @@ from business_prospector.application.deployment import (
     artifact_checksum,
     public_artifact_files,
 )
+from business_prospector.application.technical_deployment import TechnicalDeploymentTarget
 from business_prospector.domain.exceptions import ValidationError
 
 ENV_BASE_URL = "BUSINESS_PROSPECTOR_CPANEL_BASE_URL"
@@ -351,7 +352,8 @@ class HostGatorPreviewDeploymentProvider:
         self._client = client
 
     def publish(self, site_path: Path, preview_slug: str) -> DeploymentResult:
-        slug = _safe_slug(preview_slug)
+        target = self.target(preview_slug)
+        slug = target.preview_slug
         files = public_artifact_files(site_path)
         checksum = artifact_checksum(site_path)
         deployment_id = checksum[:16]
@@ -403,46 +405,53 @@ class HostGatorPreviewDeploymentProvider:
         )
 
     def ensure_subdomain(self, preview_slug: str) -> DomainEnsureResult:
-        slug = _safe_slug(preview_slug)
-        fqdn = f"{slug}.{self._config.root_domain}"
-        expected = _safe_remote_path(f"{self._config.base_dir}/{slug}")
-        existing = self._find_domain(fqdn)
+        target = self.target(preview_slug)
+        existing = self._find_domain(target.fqdn)
         if existing is not None:
             actual = _domain_document_root(existing)
-            if not _document_roots_match(actual, expected):
+            if not _document_roots_match(actual, target.document_root):
                 raise CPanelError(
                     "document_root_conflict",
                     "preview domain exists with a different document root",
                 )
-            return DomainEnsureResult("existing", fqdn, expected)
-        self._client.add_subdomain(slug, self._config.root_domain, expected)
-        return DomainEnsureResult("created", fqdn, expected)
+            return DomainEnsureResult("existing", target.fqdn, target.document_root)
+        self._client.add_subdomain(
+            target.preview_slug, self._config.root_domain, target.document_root,
+        )
+        return DomainEnsureResult("created", target.fqdn, target.document_root)
 
     def status(self, preview_slug: str) -> DeploymentStatus:
-        slug = _safe_slug(preview_slug)
-        fqdn = f"{slug}.{self._config.root_domain}"
-        expected = _safe_remote_path(f"{self._config.base_dir}/{slug}")
-        domain = self._find_domain(fqdn)
+        target = self.target(preview_slug)
+        domain = self._find_domain(target.fqdn)
         configured = domain is not None
         root_matches = configured and _document_roots_match(
-            _domain_document_root(domain or {}), expected,
+            _domain_document_root(domain or {}), target.document_root,
         )
         files_present = False
         warnings: list[str] = []
         if root_matches:
             try:
-                listing = self._client.list_files(expected)
+                listing = self._client.list_files(target.document_root)
                 names = _listed_file_names(listing)
                 files_present = {"index.html", "styles.css"} <= names
             except CPanelError as exc:
                 warnings.append(f"file status unavailable: {exc.code}")
-        ssl_status = self._ssl_status(fqdn)
+        ssl_status = self._ssl_status(target.fqdn)
         if ssl_status != "active":
             warnings.append("HTTPS certificate is not active")
         state = "published" if configured and root_matches and files_present else "not_published"
         return DeploymentStatus(
-            state, slug, f"https://{fqdn}", configured, bool(root_matches), files_present,
+            state, target.preview_slug, f"https://{target.fqdn}",
+            configured, bool(root_matches), files_present,
             ssl_status, tuple(warnings),
+        )
+
+    def target(self, preview_slug: str) -> TechnicalDeploymentTarget:
+        slug = _safe_slug(preview_slug)
+        return TechnicalDeploymentTarget(
+            slug,
+            f"{slug}.{self._config.root_domain}",
+            _safe_remote_path(f"{self._config.base_dir}/{slug}"),
         )
 
     def unpublish(self, preview_slug: str) -> UnpublishResult:

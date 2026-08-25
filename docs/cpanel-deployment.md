@@ -20,6 +20,58 @@ Publication does not change the lead status to `contacted`. `sales_preview` rema
 commercial lifecycle stage; deployment state is stored separately in the private local
 site manifest. No deployment metadata or credential is stored in SQLite.
 
+## Technical deployment test
+
+A technical deployment test is deliberately distinct from commercial publication:
+
+```text
+Internal Website
+  -> explicit technical smoke authorization
+  -> infrastructure validated
+Internal Website remains unchanged
+  -> design/content work continues
+  -> human approval
+Sales Preview
+  -> commercial publish
+  -> outreach only in a later explicit operation
+```
+
+The administrative CLI locates an existing artifact only through the controlled plugin
+data `sites/` root. It accepts a safe site slug, never an arbitrary path. It reuses
+`SiteDraftService`, public artifact validation and `HostGatorPreviewDeploymentProvider`.
+It does not read SQLite, update lead status, approve content/assets, or write commercial
+deployment metadata to `site-manifest.json`.
+
+Dry-run is the default and makes no cPanel request:
+
+```bash
+python -m business_prospector.cpanel_smoke \
+  --site-slug <controlled-site-slug> \
+  --preview-slug drlaura \
+  --dry-run
+```
+
+Real execution requires both independent gates; omission or mismatch performs no write:
+
+```bash
+python -m business_prospector.cpanel_smoke \
+  --site-slug <controlled-site-slug> \
+  --preview-slug drlaura \
+  --execute \
+  --confirm drlaura
+```
+
+Read-only provider status needs no lead or artifact:
+
+```bash
+python -m business_prospector.cpanel_smoke --preview-slug drlaura --status
+```
+
+Every result is marked `deployment_purpose=technical_test` and
+`cleanup=manual_required`. A technical-test URL must not be shared with a prospect. The
+first test domain and directory must be removed or updated manually while infrastructure
+validation is underway; automatic deletion remains unsupported.
+
 ## Official operations
 
 The current cPanel catalog documents these UAPI v3 operations:

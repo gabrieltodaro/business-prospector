@@ -108,6 +108,11 @@ O repositorio usa o formato Agent Plugins 1.0.0: `plugin.json`, `mcp.json` e Ski
 
 No formato Agent Plugins, o OpenClaw expande `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` ao iniciar o MCP. No fallback 2026.7.1, expande `${CLAUDE_PLUGIN_ROOT}`. Nenhum path absoluto do autor ou de Windows e necessario.
 
+O harness administrativo `python -m business_prospector.cpanel_smoke` permite validar
+um draft controlado com dry-run local por padrao. A execucao tecnica exige simultaneamente
+`--execute` e `--confirm <preview-slug>` e permanece separada de Sales Preview, contato e
+outreach. Veja [Sales Preview deployment com cPanel](docs/cpanel-deployment.md).
+
 ### Identidade de empresas
 
 Google Place ID tem precedencia sobre identificadores derivados. Dois registros com Place IDs nao vazios e diferentes representam Places distintos e nunca sao unidos por dominio, telefone, endereco ou nome+cidade. Esses fallbacks sao usados somente quando pelo menos um registro nao possui Place ID. Dominios compartilhados de redes sociais e perfis de terceiros nao sao identificadores de empresa. A selecao de benchmarks separa correspondencia com o alvo, duplicata dentro do pool e duplicata ja persistida.
