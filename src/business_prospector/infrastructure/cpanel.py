@@ -696,21 +696,43 @@ def _upload_counts(data: Any) -> tuple[int, int]:
 
 
 def _listed_file_names(data: Any) -> set[str]:
-    if not isinstance(data, dict) or not isinstance(data.get("files", []), list):
-        raise CPanelError("malformed_response", "cPanel file listing is malformed")
     return {
-        str(item.get("file")) for item in data.get("files", [])
-        if isinstance(item, dict) and item.get("type", "file") == "file" and item.get("file")
+        name for name, entry_type in _fileman_listing_entries(data)
+        if entry_type == "file"
     }
 
 
 def _listed_directory_names(data: Any) -> set[str]:
-    if not isinstance(data, dict) or not isinstance(data.get("dirs", []), list):
-        raise CPanelError("malformed_response", "cPanel directory listing is malformed")
     return {
-        str(item.get("file")) for item in data.get("dirs", [])
-        if isinstance(item, dict) and item.get("file")
+        name for name, entry_type in _fileman_listing_entries(data)
+        if entry_type == "dir"
     }
+
+
+def _fileman_listing_entries(data: Any) -> tuple[tuple[str, str], ...]:
+    """Extract only safe immediate names and types from Fileman list_files data."""
+    typed_entries: list[tuple[Any, str | None]] = []
+    if isinstance(data, list):
+        typed_entries.extend((item, None) for item in data)
+    elif isinstance(data, dict):
+        files = data.get("files", [])
+        directories = data.get("dirs", [])
+        if not isinstance(files, list) or not isinstance(directories, list):
+            raise CPanelError("malformed_response", "cPanel file listing is malformed")
+        typed_entries.extend((item, "file") for item in files)
+        typed_entries.extend((item, "dir") for item in directories)
+    else:
+        raise CPanelError("malformed_response", "cPanel file listing is malformed")
+
+    result: list[tuple[str, str]] = []
+    for item, fallback_type in typed_entries:
+        if not isinstance(item, dict):
+            raise CPanelError("malformed_response", "cPanel file entry is malformed")
+        name = item.get("file")
+        entry_type = item.get("type", fallback_type)
+        if isinstance(name, str) and _safe_filename(name) and entry_type in {"file", "dir"}:
+            result.append((name, str(entry_type)))
+    return tuple(result)
 
 
 def _listed_public_entries(data: Any) -> tuple[str, ...]:

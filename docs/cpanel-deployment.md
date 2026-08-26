@@ -109,6 +109,11 @@ and `data`; arbitrary JSON objects remain malformed. Application and domain code
 depend on which transport response shape was received. This is compatibility with an
 observed hosting response variant, not a provider guarantee.
 
+`Fileman/list_files` data may be the observed list of entry objects or the older grouped
+`files`/`dirs` representation. The parser retains only each safe immediate `file` name and
+its `file`/`dir` type. Fields such as absolute paths, ownership IDs, permissions and other
+server metadata are discarded before status results are built.
+
 ## Authentication and secrets
 
 Only cPanel API Token authentication is supported:

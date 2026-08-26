@@ -596,6 +596,79 @@ def test_status_is_read_only_and_reports_ssl_active() -> None:
     assert all(request.method == "GET" for request in transport.requests)
 
 
+def test_status_accepts_real_flattened_fileman_list_without_sensitive_leakage() -> None:
+    base_entries = [
+        {
+            "file": ".staging-drlaura-e3e40773f66f2bcc", "type": "dir", "exists": 1,
+            "absdir": "/home/private/public_html/sales-previews", "fullpath": "/secret/staging",
+            "uid": 1234, "gid": 5678,
+        },
+        {
+            "file": "drlaura", "type": "dir", "exists": 1,
+            "absdir": "/home/private/public_html/sales-previews", "uid": 1234,
+        },
+        {"file": "customer-preview", "type": "dir", "fullpath": "/secret/customer"},
+        {"file": "unrelated.txt", "type": "file", "fullpath": "/secret/unrelated.txt"},
+    ]
+    final_entries = [
+        {"file": "README.md", "type": "file", "uid": 1234},
+        {"file": "customer-data.txt", "type": "file", "gid": 5678},
+        {"file": "/absolute-secret", "type": "file", "fullpath": "/absolute-secret"},
+    ]
+    transport = FakeTransport(
+        flattened_response([{
+            "domain": "drlaura.gapps.test",
+            "documentroot": "public_html/sales-previews/drlaura",
+        }]),
+        flattened_response(base_entries),
+        flattened_response(final_entries),
+        flattened_response([]),
+    )
+    provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
+
+    result = provider.status("drlaura")
+
+    assert result.document_root_present is True
+    assert result.staging_residual_present is True
+    assert result.public_files == ()
+    assert result.expected_files_present is False
+    serialized = json.dumps(result.to_dict())
+    for private_value in (
+        "/home/private", "/secret", "1234", "5678", "customer-preview",
+        "unrelated.txt", "README.md", "customer-data.txt", "absolute-secret",
+    ):
+        assert private_value not in serialized
+    assert all(request.method == "GET" for request in transport.requests)
+
+
+def test_real_fileman_list_exposes_only_allowlisted_public_entries() -> None:
+    transport = FakeTransport(
+        flattened_response([{
+            "domain": "drlaura.gapps.test",
+            "documentroot": "public_html/sales-previews/drlaura",
+        }]),
+        flattened_response([{"file": "drlaura", "type": "dir"}]),
+        flattened_response([
+            {"file": "index.html", "type": "file", "fullpath": "/secret/index.html"},
+            {"file": "styles.css", "type": "file", "uid": 1234},
+            {"file": "assets", "type": "dir", "gid": 5678},
+            {"file": "site-manifest.json", "type": "file"},
+            {"file": "other-customer.txt", "type": "file"},
+        ]),
+        flattened_response([]),
+    )
+    provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
+
+    result = provider.status("drlaura")
+
+    assert result.public_files == ("assets/", "index.html", "styles.css")
+    serialized = json.dumps(result.to_dict())
+    assert "site-manifest.json" not in serialized
+    assert "other-customer.txt" not in serialized
+    assert "/secret/index.html" not in serialized
+    assert "1234" not in serialized and "5678" not in serialized
+
+
 def test_provider_uses_only_current_uapi_and_no_shell_or_api2() -> None:
     source = (Path(__file__).parents[1] / "src/business_prospector/infrastructure/cpanel.py").read_text()
     assert "rename_file" not in source
