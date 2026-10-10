@@ -92,4 +92,10 @@ if [ "${1:-}" = "--check-cpanel-env" ]; then
   exit 78
 fi
 
+if [ "${1:-}" = "--dashboard" ]; then
+  shift
+  PYTHONPATH="$PLUGIN_DIR/src${PYTHONPATH:+:$PYTHONPATH}" \
+    exec "$PROSPECTOR_PYTHON" -m business_prospector.dashboard "$@"
+fi
+
 exec "$PROSPECTOR_PYTHON" "$PLUGIN_DIR/run_mcp.py" "$@"

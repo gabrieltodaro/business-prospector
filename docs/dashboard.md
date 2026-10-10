@@ -8,6 +8,11 @@ Geração bem-sucedida promove um lead qualificado somente a **Internal Website*
 
 **Sales Preview** significa que uma pessoa revisou o conteúdo visível e aprovou explicitamente os assets para publicação. A ação **Approve Sales Preview** executa a regra no backend; drag-and-drop para essa coluna é rejeitado e o card volta à origem. A aprovação não publica o site e não significa `contacted`.
 
+**Published Sales Preview** é uma dimensão do website persistida no manifesto, não uma
+coluna adicional do lead. Um lead pode permanecer `sales_preview` com o preview publicado;
+depois do contato real, `contacted + published` continua sendo apresentado como Published
+Sales Preview. Em termos operacionais: `approval != publish` e `publish != contacted`.
+
 O dashboard consulta `SiteDraftService` para cada slug. O status sozinho não prova que existe site: o botão **Ver Site** aparece somente quando estrutura e `site-manifest.json` são válidos. A API expõe metadata segura, nunca o path absoluto.
 
 Sites válidos são servidos em:
@@ -25,7 +30,10 @@ Sites gerados antes da atualização não provocam atualização automática do 
 ```text
 Browser
   -> HTTP API local
-  -> DashboardApplication / LeadStatusService
+  -> DashboardApplication / application services
+     -> LeadStatusService
+     -> SalesPreviewLifecycleService
+     -> SalesPreviewDeploymentService
   -> SQLiteLeadRepository
   -> SQLite
 ```
@@ -78,16 +86,59 @@ Cada card mostra empresa, cidade, categoria, score persistido, rating, numero de
 
 O painel lateral e read-only e apresenta dados do negocio, Maps/Place ID, website, motivo e flags do assessment, contatos, score/status/fonte e timestamps. Para `first_website`, tambem mostra benchmark market, benchmarks utilizados, rating/reviews, facts, features comuns, inferences, recommendations e confidence persistidos no report validado. O breakdown do score nao e persistido nem recalculado no JavaScript.
 
-Uma escrita comum é:
+As mudanças genéricas seguem um grafo explícito. O caminho normal é:
+
+```text
+new -> qualified -> internal_website
+internal_website -> sales_preview somente por aprovação
+sales_preview -> contacted -> proposal -> closed
+```
+
+`needs_review` e `discarded` permanecem caminhos explícitos de revisão/saída. Saltos e
+regressões arbitrárias são rejeitados no backend, inclusive `qualified -> contacted` e
+`internal_website -> contacted`.
+
+Uma escrita comum permitida pelo estágio atual é:
 
 ```http
 PATCH /api/leads/{id}/status
 Content-Type: application/json
 
-{"status":"contacted"}
+{"status":"proposal"}
 ```
 
-O backend aceita exatamente esse campo, valida ID e status pelo domínio e atualiza pelo repositório existente. `internal_website` exige artefato válido; `sales_preview` nunca é aceito por essa rota. A rota separada de aprovação exige confirmação de conteúdo, lista explícita de assets e identidade do revisor, revalida o artefato e grava no manifesto `preview_slug`, `preview_status=approved_not_published`, `preview_url=null`, horário e revisor. Em falha, o frontend preserva o estado e mostra razões determinísticas. Não há deploy, outreach ou edição geral.
+O backend aceita exatamente esse campo, valida ID, estágio de origem e destino, e atualiza
+pelo repositório existente. `internal_website` exige artefato válido; `sales_preview` nunca
+é aceito por essa rota. A rota separada de aprovação exige confirmação de conteúdo, lista
+explícita de assets e identidade do revisor, revalida o artefato e grava no manifesto
+`preview_slug`, `preview_status=approved_not_published`, `preview_url=null`, horário e
+revisor. Em falha, o frontend preserva o estado e mostra razões determinísticas.
+
+## Publicação no dashboard
+
+O payload de cada lead inclui uma projection local e allowlisted do manifesto com stage,
+aprovação, slug, URL, deployment, timestamps, último SSL conhecido e contagem de arquivos.
+Listar cards nunca chama cPanel e nunca expõe paths, checksums, credenciais ou o manifesto
+integral.
+
+Depois da aprovação, **Publish Preview** mostra a confirmação:
+
+```text
+This will publish the approved Sales Preview. It will not contact the prospect.
+```
+
+O browser envia somente `explicitly_authorized=true` e o ID já presente na URL. Host,
+token, domínio, slug, document root e paths são derivados pelo backend de configuração e
+metadata confiáveis. A operação reutiliza `SalesPreviewDeploymentService` e
+`HostGatorPreviewDeploymentProvider`; sucesso mantém o lead em `sales_preview`.
+
+**Check Deployment Status** é uma consulta read-only acionada pelo operador. Não existe
+polling, background check ou N chamadas ao carregar o board. O resultado seguro mostra
+domínio, document root, arquivos, URL e SSL. A UI apresenta:
+
+- `Published — HTTPS ready` para SSL `active`;
+- `Published — SSL pending` para `pending`;
+- `Published — SSL unknown` para `unknown`.
 
 ## Seguranca
 
@@ -112,7 +163,7 @@ cd /caminho/para/business-prospector
 git pull --ff-only origin openclaw-port
 python3 scripts/setup_openclaw_runtime.py
 bin/business-prospector-mcp --check
-~/.openclaw/venvs/business-prospector/bin/python -m business_prospector.dashboard
+bin/business-prospector-mcp --dashboard
 ```
 
 Entao abra `http://127.0.0.1:8765` no proprio Mac Mini (ou use um tunel deliberado e protegido; hospedagem remota esta fora do MVP).
@@ -123,4 +174,6 @@ Entao abra `http://127.0.0.1:8765` no proprio Mac Mini (ou use um tunel delibera
 - aprovação de Sales Preview é simples e explícita; não há workflow editorial complexo;
 - sem fatos/inferencias Playwright ou breakdown de score persistidos;
 - sem batch prospecting, outreach, edicao geral ou delete;
+- sem reserva global de preview slug ou reconciliação automática entre remoto e manifesto;
+- sem contact-readiness: contato/outreach continua sendo uma futura operação autorizada;
 - a interface nao inicia Places, Playwright ou MCP; ela apenas opera leads ja persistidos.

@@ -180,7 +180,7 @@ A geração visual 2.0 produz drafts comerciais mais completos e inclui proveni�
 
 Após geração e validação bem-sucedidas, o pipeline move o lead para `internal_website` (**Internal Website**): há um artefato válido para revisão da Gapps, mas ele ainda não está aprovado para uso comercial. **Sales Preview** (`sales_preview`) é uma etapa posterior e exige aprovação humana explícita de conteúdo e dos direitos de publicação de todos os assets. Ela não significa que houve contato com o prospect.
 
-O [dashboard](docs/dashboard.md) oferece **Ver Site** em `/sites/<slug>/`, restrito ao servidor local, mostra a prontidão calculada pelo Python e impede drag-and-drop de contornar a aprovação. A aprovação apenas registra metadata e propõe um identificador seguro para um futuro subdomínio Gapps; esta versão não publica, cria DNS nem faz outreach.
+O [dashboard](docs/dashboard.md) oferece **Ver Site** em `/sites/<slug>/`, restrito ao servidor local, mostra a prontidão calculada pelo Python e impede drag-and-drop de contornar a aprovação. Aprovação e publicação são ações humanas distintas: **Approve Sales Preview** registra metadata comercial; **Publish Preview** exige outra confirmação explícita e reutiliza o provider cPanel configurado. Nenhuma delas faz outreach ou marca o lead como contatado.
 
 A publicação controlada de Sales Preview possui agora um adapter [HostGator/cPanel UAPI](docs/cpanel-deployment.md). Ele usa exclusivamente HTTPS + API Token, transporte injetável e allowlist de artefatos; FTP e senha cPanel são proibidos. Publicação continua sendo uma ação humana separada, não altera o lead para Contatado e depende de configuração secreta do runtime. DNS não está implementado.
 
@@ -189,6 +189,6 @@ A publicação controlada de Sales Preview possui agora um adapter [HostGator/cP
 - secrets e bancos locais sao ignorados pelo Git;
 - URLs aceitas pelo dominio devem ser absolutas e `http(s)`;
 - dados de websites sao explicitamente nao confiaveis nas Skills;
-- o MCP nao envia mensagens nem executa deploy;
+- o MCP não envia mensagens; deploy comercial só ocorre pela ferramenta explícita `publish_sales_preview` após aprovação e autorização separadas;
 - o SQLite usa context managers, timeout, busy timeout e WAL;
 - logs nao incluem credenciais nem payloads completos de websites.

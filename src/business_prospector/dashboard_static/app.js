@@ -77,7 +77,8 @@ function makeCard(lead) {
   addIndicator(indicators,lead.website_url?'Website':'Sem site',Boolean(lead.website_url),!lead.website_url); if(!hasContact(lead))addIndicator(indicators,'Sem contato',false,true);
   indicators.append(node('span','indicator on',`${lead.website_issue_count||0} issues`)); card.append(indicators);
   if(lead.site_draft?.exists){const action=siteLink(lead.site_draft.site_url,'Ver Site','site-action');action.addEventListener('click',event=>event.stopPropagation());card.append(action)}
-  if(visualStatus(lead.status)==='sales_preview')card.append(node('span','sales-preview-mark','Sales Preview'));
+  if(lead.website_deployment?.website_stage==='published_sales_preview')card.append(node('span','sales-preview-mark','Published Sales Preview'));
+  else if(visualStatus(lead.status)==='sales_preview')card.append(node('span','sales-preview-mark','Sales Preview'));
   card.addEventListener('click',()=>openDetail(lead)); card.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openDetail(lead)}});card.tabIndex=0;
   card.addEventListener('dragstart',()=>{draggedId=lead.id;card.classList.add('dragging')});card.addEventListener('dragend',()=>{draggedId=null;card.classList.remove('dragging');document.querySelectorAll('.drop-target').forEach(x=>x.classList.remove('drop-target'))});
   return card;
@@ -115,17 +116,38 @@ function openDetail(lead) {
     ])));
   }
   if(lead.site_draft?.exists){
-    const stage=visualStatus(lead.status)==='sales_preview'?'Sales Preview':'Internal Website';
     const readiness=lead.sales_preview_readiness||{};
-    content.append(detailSection('Website lifecycle',[
-      ['Website stage',stage],['Gerado em',lead.site_draft.generated_at],['Slug',lead.site_draft.lead_slug],
+    const deployment=lead.website_deployment||{};
+    const remote=lead.remote_deployment_status||{};
+    const website=detailSection('Website / Sales Preview',[
+      ['Website stage',websiteStageLabel(deployment)],['Gerado em',lead.site_draft.generated_at],['Slug',lead.site_draft.lead_slug],
+      ['Approval readiness',readiness.ready?'Ready':'Not ready'],
+      ['Blocking reasons',(readiness.blocking_reasons||[]).join(' · ')||'—'],
       ['Informações pendentes',readiness.missing_information_count??0],['Assets',readiness.asset_count??0],
       ['Assets sem aprovação publish',(readiness.assets_not_approved||[]).length],
-      ['Warnings',(readiness.warnings||[]).join(' · ')||'—'],['Visualização',siteLink(lead.site_draft.site_url,'Ver Site')]
-    ]));
+      ['Warnings',(readiness.warnings||[]).join(' · ')||'—'],['Visualização',siteLink(lead.site_draft.site_url,'Ver Site')],
+      ['Approval status',deployment.approval_status],['Preview slug',deployment.preview_slug],
+      ['Approved at',deployment.approved_at],['Approved by',deployment.approved_by],
+      ['Deployment',deploymentLabel(deployment,remote)],
+      ['Published at',deployment.published_at],['Files uploaded',deployment.files_uploaded],
+      ['Preview URL',externalLink(deployment.preview_url,'Open Published Preview')],
+      ['Remote domain',remote.domain_configured===undefined?'—':remote.domain_configured?'Configured':'Not configured'],
+      ['Remote document root',remote.document_root_matches===undefined?'—':remote.document_root_matches?'Matches':'Mismatch'],
+      ['Remote files',remote.expected_files_present===undefined?'—':remote.expected_files_present?'Present':'Incomplete'],
+      ['Remote SSL',remote.ssl_status||'—']
+    ]);
+    content.append(website);
     if(visualStatus(lead.status)==='internal_website'){
       const approve=node('button','approve-preview','Approve Sales Preview');
-      approve.addEventListener('click',()=>approveSalesPreview(lead));content.append(approve);
+      approve.addEventListener('click',()=>approveSalesPreview(lead));website.append(approve);
+    }
+    if(deployment.approval_status==='approved_not_published'){
+      const publish=node('button','approve-preview publish-preview','Publish Preview');
+      publish.addEventListener('click',()=>publishSalesPreview(lead));website.append(publish);
+    }
+    if(deployment.deployment_status==='published'){
+      const check=node('button','approve-preview check-deployment','Check Deployment Status');
+      check.addEventListener('click',()=>checkDeploymentStatus(lead));website.append(check);
     }
   }
   content.append(detailSection('Contatos', [['Telefone',lead.phone],['WhatsApp',lead.whatsapp],['Confirmado',lead.whatsapp_confirmed?'Sim':'Não'],['Fonte WhatsApp',lead.whatsapp_source],['E-mail',lead.email],['Instagram',externalLink(lead.instagram,'Abrir Instagram')]]));
@@ -142,6 +164,33 @@ async function approveSalesPreview(lead){
   try{
     await request(`/api/leads/${lead.id}/approve-sales-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content_review_acknowledged:true,asset_keys_approved_for_publish:readiness.assets_not_approved||[],approved_by:'dashboard_human_review'})});
     closeDetail();await load();showToast('Sales Preview aprovado');
+  }catch(error){showToast(error.message,true)}
+}
+function websiteStageLabel(deployment){
+  if(deployment.website_stage==='published_sales_preview')return 'Published Sales Preview';
+  if(deployment.website_stage==='sales_preview')return 'Sales Preview — Approved, not published';
+  return 'Internal Website';
+}
+function deploymentLabel(deployment,remote={}){
+  if(deployment.deployment_status!=='published')return 'Not published';
+  const ssl=remote.ssl_status||deployment.last_known_ssl_status;
+  if(ssl==='active')return 'Published — HTTPS ready';
+  if(ssl==='pending')return 'Published — SSL pending';
+  return 'Published — SSL unknown';
+}
+async function publishSalesPreview(lead){
+  const message='This will publish the approved Sales Preview. It will not contact the prospect.';
+  if(!window.confirm(message))return;
+  try{
+    await request(`/api/leads/${lead.id}/publish-sales-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({explicitly_authorized:true})});
+    closeDetail();await load();showToast('Sales Preview published; lead remains Sales Preview');
+  }catch(error){showToast(error.message,true)}
+}
+async function checkDeploymentStatus(lead){
+  try{
+    const body=await request(`/api/leads/${lead.id}/deployment-status`);
+    lead.remote_deployment_status=body.deployment_status;
+    openDetail(lead);showToast('Deployment status updated');
   }catch(error){showToast(error.message,true)}
 }
 function closeDetail(){el('inspector').classList.remove('open');el('inspector').setAttribute('aria-hidden','true');el('scrim').hidden=true}

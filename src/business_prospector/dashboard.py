@@ -14,6 +14,10 @@ from importlib.resources.abc import Traversable
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from business_prospector.application.config import ProspectingConfig
+from business_prospector.application.deployment import (
+    PreviewDeploymentProvider,
+    SalesPreviewDeploymentService,
+)
 from business_prospector.application.lead_status import LeadStatusService
 from business_prospector.application.prospecting import ProspectingService
 from business_prospector.application.site_generation import (
@@ -22,6 +26,7 @@ from business_prospector.application.site_generation import (
     validate_generated_site,
 )
 from business_prospector.application.sales_preview import SalesPreviewLifecycleService
+from business_prospector.application.website_projection import WebsiteDeploymentProjectionService
 from business_prospector.domain.exceptions import LeadNotFoundError, ProspectorError, ValidationError
 from business_prospector.domain.models import PIPELINE_STATUSES, Lead
 from business_prospector.infrastructure.fake_providers import (
@@ -29,6 +34,7 @@ from business_prospector.infrastructure.fake_providers import (
     FakeWebsiteAssessmentProvider,
 )
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
+from business_prospector.infrastructure.cpanel import preview_deployment_provider_from_environment
 from business_prospector.package_resources import (
     dashboard_static_resource,
     default_config_resource,
@@ -46,13 +52,21 @@ STATIC_FILES = {
 
 
 class DashboardApplication:
-    def __init__(self, repository: SQLiteLeadRepository, sites_root: Path | None = None) -> None:
+    def __init__(
+        self, repository: SQLiteLeadRepository, sites_root: Path | None = None,
+        deployment_provider: PreviewDeploymentProvider | None = None,
+    ) -> None:
         self.repository = repository
         self.statuses = LeadStatusService(repository)
         self.drafts = SiteDraftService(
             sites_root or controlled_sites_root(repository.database_path.parent)
         )
         self.sales_previews = SalesPreviewLifecycleService(repository, self.drafts)
+        self.website_projections = WebsiteDeploymentProjectionService(self.drafts)
+        self.deployments = (
+            SalesPreviewDeploymentService(repository, self.drafts, deployment_provider)
+            if deployment_provider is not None else None
+        )
 
     def list_leads(self, filters: dict[str, str]) -> list[Lead]:
         leads = self.repository.list(1000)
@@ -97,6 +111,7 @@ class DashboardApplication:
         payload = lead.to_dict()
         payload["site_draft"] = self.drafts.inspect(lead.slug or "").public_dict()
         payload["sales_preview_readiness"] = self.sales_previews.readiness(lead).to_dict()
+        payload["website_deployment"] = self.website_projections.project(lead).to_dict()
         return payload
 
     def approve_sales_preview(self, lead_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +130,18 @@ class DashboardApplication:
             approved_by=payload.get("approved_by"),
         )
         return approval.to_dict()
+
+    def publish_sales_preview(self, lead_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        if set(payload) != {"explicitly_authorized"} or payload.get("explicitly_authorized") is not True:
+            raise ValidationError("explicit publication authorization is required")
+        if self.deployments is None:
+            raise ValidationError("cPanel deployment is not configured")
+        return self.deployments.publish(lead_id, explicitly_authorized=True).to_dict()
+
+    def deployment_status(self, lead_id: int) -> dict[str, Any]:
+        if self.deployments is None:
+            raise ValidationError("cPanel deployment is not configured")
+        return self.deployments.status(lead_id).to_dict()
 
 
 def create_handler(application: DashboardApplication, static_dir: Traversable) -> type[BaseHTTPRequestHandler]:
@@ -140,6 +167,12 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
                 lead_id = self._lead_id(parsed.path)
                 if lead_id is not None:
                     return self._json(HTTPStatus.OK, {"lead": application.lead_payload(application.get_lead(lead_id))})
+                deployment_lead_id = self._deployment_status_lead_id(parsed.path)
+                if deployment_lead_id is not None:
+                    return self._json(
+                        HTTPStatus.OK,
+                        {"deployment_status": application.deployment_status(deployment_lead_id)},
+                    )
                 if parsed.path.startswith("/sites/"):
                     return self._generated_site(parsed.path)
                 if parsed.path in STATIC_FILES:
@@ -149,6 +182,9 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
                 return self._error(HTTPStatus.BAD_REQUEST, str(exc))
             except LeadNotFoundError as exc:
                 return self._error(HTTPStatus.NOT_FOUND, str(exc))
+            except ProspectorError as exc:
+                LOGGER.warning("dashboard provider read failed: %s", exc)
+                return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
             except (sqlite3.Error, OSError) as exc:
                 LOGGER.warning("dashboard read failed: %s", exc)
                 return self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "dashboard data is unavailable")
@@ -177,14 +213,22 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
         def do_POST(self) -> None:
             parsed = urlsplit(self.path)
             lead_id = self._approval_lead_id(parsed.path)
-            if lead_id is None:
+            publish_lead_id = self._publish_lead_id(parsed.path)
+            if lead_id is None and publish_lead_id is None:
                 return self._method_or_not_found(parsed.path, "GET")
             try:
                 payload = self._read_json()
-                approval = application.approve_sales_preview(lead_id, payload)
-                return self._json(HTTPStatus.OK, approval)
+                if lead_id is not None:
+                    approval = application.approve_sales_preview(lead_id, payload)
+                    return self._json(HTTPStatus.OK, approval)
+                assert publish_lead_id is not None
+                result = application.publish_sales_preview(publish_lead_id, payload)
+                return self._json(HTTPStatus.OK, {"deployment": result})
             except ValidationError as exc:
                 return self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            except ProspectorError as exc:
+                LOGGER.warning("dashboard commercial action failed: %s", exc)
+                return self._error(HTTPStatus.BAD_GATEWAY, str(exc))
             except json.JSONDecodeError:
                 return self._error(HTTPStatus.BAD_REQUEST, "invalid JSON")
             except (sqlite3.Error, OSError) as exc:
@@ -235,6 +279,26 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
             if (
                 len(parts) == 4 and parts[:2] == ["api", "leads"] and
                 parts[2].isdigit() and parts[3] == "approve-sales-preview"
+            ):
+                return int(parts[2])
+            return None
+
+        @staticmethod
+        def _publish_lead_id(path: str) -> int | None:
+            parts = path.strip("/").split("/")
+            if (
+                len(parts) == 4 and parts[:2] == ["api", "leads"] and
+                parts[2].isdigit() and parts[3] == "publish-sales-preview"
+            ):
+                return int(parts[2])
+            return None
+
+        @staticmethod
+        def _deployment_status_lead_id(path: str) -> int | None:
+            parts = path.strip("/").split("/")
+            if (
+                len(parts) == 4 and parts[:2] == ["api", "leads"] and
+                parts[2].isdigit() and parts[3] == "deployment-status"
             ):
                 return int(parts[2])
             return None
@@ -349,7 +413,13 @@ def main() -> int:
 
     repository = SQLiteLeadRepository(database)
     static_dir = dashboard_static_resource()
-    server = ThreadingHTTPServer((args.host, args.port), create_handler(DashboardApplication(repository), static_dir))
+    deployment_provider = preview_deployment_provider_from_environment()
+    server = ThreadingHTTPServer(
+        (args.host, args.port),
+        create_handler(DashboardApplication(
+            repository, deployment_provider=deployment_provider,
+        ), static_dir),
+    )
     print(f"Business Prospector dashboard: http://{args.host}:{args.port}")
     print(f"SQLite source: {database}")
     try:

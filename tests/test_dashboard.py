@@ -11,10 +11,13 @@ from typing import Iterator
 
 import pytest
 
+from business_prospector.application.deployment import DeploymentResult, DeploymentStatus
 from business_prospector.dashboard import DashboardApplication, create_handler
 from business_prospector.application.site_generation import SiteGenerationService
+from business_prospector.domain.exceptions import ValidationError
 from business_prospector.domain.models import Lead, WebsiteAssessment
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
+from business_prospector.infrastructure.cpanel import CPanelError
 from business_prospector.package_resources import site_demo_fixture_resource
 
 
@@ -94,6 +97,50 @@ def create_draft(application: DashboardApplication) -> tuple[Lead, Path]:
     return stored, site
 
 
+class FakeDashboardDeploymentProvider:
+    def __init__(self, *, ssl_status: str = "pending", fail_publish: bool = False) -> None:
+        self.ssl_status = ssl_status
+        self.fail_publish = fail_publish
+        self.publish_calls = 0
+        self.status_calls = 0
+
+    def publish(self, site_path: Path, preview_slug: str) -> DeploymentResult:
+        self.publish_calls += 1
+        if self.fail_publish:
+            raise CPanelError("uapi_error", "safe fake deployment failure")
+        from business_prospector.application.deployment import artifact_checksum
+        return DeploymentResult(
+            "published", preview_slug, f"https://{preview_slug}.gapps.test", 3,
+            "created", self.ssl_status, "fake-deployment", artifact_checksum(site_path), (),
+            "direct_first_publish", "manual_required",
+            ("index.html", "styles.css", "assets/hero-visual.svg"),
+        )
+
+    def status(self, preview_slug: str) -> DeploymentStatus:
+        self.status_calls += 1
+        return DeploymentStatus(
+            "published", preview_slug, f"https://{preview_slug}.gapps.test",
+            True, True, True, self.ssl_status, (),
+            ("index.html", "styles.css"), False, True,
+        )
+
+
+def approved_dashboard(tmp_path: Path, provider: FakeDashboardDeploymentProvider) -> tuple[
+    DashboardApplication, Lead, Path,
+]:
+    repository = SQLiteLeadRepository(tmp_path / "dashboard.db")
+    saved_lead(repository)
+    initial = DashboardApplication(repository)
+    stored, site = create_draft(initial)
+    repository.update(stored.id or 0, {"status": "internal_website"})
+    initial.approve_sales_preview(stored.id or 0, {
+        "content_review_acknowledged": True,
+        "asset_keys_approved_for_publish": [],
+        "approved_by": "dashboard_human_review",
+    })
+    return DashboardApplication(repository, deployment_provider=provider), stored, site
+
+
 def test_lists_filters_and_returns_security_headers(application: DashboardApplication) -> None:
     with running_server(application) as address:
         status, headers, body = call(address, "GET", "/api/leads?city=cat&min_score=80")
@@ -106,15 +153,15 @@ def test_lists_filters_and_returns_security_headers(application: DashboardApplic
     assert "default-src 'self'" in headers["Content-Security-Policy"]
 
 
-def test_status_only_update_persists_valid_pipeline_status(application: DashboardApplication) -> None:
+def test_status_only_update_rejects_skipping_commercial_stages(application: DashboardApplication) -> None:
     lead_id = application.repository.list()[0].id
     assert lead_id is not None
     with running_server(application) as address:
         status, _, body = call(address, "PATCH", f"/api/leads/{lead_id}/status", {"status": "contacted"})
         statuses_code, _, statuses_body = call(address, "GET", "/api/statuses")
-    assert status == 200
-    assert json.loads(body)["lead"]["status"] == "contacted"
-    assert application.repository.get(lead_id).status == "contacted"  # type: ignore[union-attr]
+    assert status == 400
+    assert b"transition is not allowed" in body
+    assert application.repository.get(lead_id).status == "qualified"  # type: ignore[union-attr]
     assert statuses_code == 200
     assert json.loads(statuses_body)["statuses"] == [
         "new", "qualified", "needs_review", "internal_website", "sales_preview",
@@ -173,6 +220,102 @@ def test_dashboard_approval_rejection_is_usable_and_preserves_status(
         })
     assert status == 400 and b"valid generated site is required" in body
     assert application.repository.get(stored.id or 0).status == "internal_website"  # type: ignore[union-attr]
+
+
+def test_dashboard_listing_uses_only_local_projection_without_provider_status(tmp_path: Path) -> None:
+    provider = FakeDashboardDeploymentProvider()
+    application, stored, _ = approved_dashboard(tmp_path, provider)
+    payload = application.lead_payload(application.get_lead(stored.id or 0))
+    assert payload["website_deployment"]["website_stage"] == "sales_preview"
+    assert payload["website_deployment"]["approval_status"] == "approved_not_published"
+    assert provider.publish_calls == 0 and provider.status_calls == 0
+
+
+def test_dashboard_publish_requires_exact_explicit_authorization(tmp_path: Path) -> None:
+    provider = FakeDashboardDeploymentProvider()
+    application, stored, _ = approved_dashboard(tmp_path, provider)
+    for payload in ({}, {"explicitly_authorized": False}, {
+        "explicitly_authorized": True, "hostname": "forbidden.example",
+    }):
+        with pytest.raises(ValidationError, match="explicit publication authorization"):
+            application.publish_sales_preview(stored.id or 0, payload)
+    assert provider.publish_calls == 0
+
+
+@pytest.mark.parametrize("ssl_status", ["pending", "active"])
+def test_dashboard_publish_reuses_service_and_preserves_sales_preview(
+    tmp_path: Path, ssl_status: str,
+) -> None:
+    provider = FakeDashboardDeploymentProvider(ssl_status=ssl_status)
+    application, stored, _ = approved_dashboard(tmp_path, provider)
+    result = application.publish_sales_preview(
+        stored.id or 0, {"explicitly_authorized": True},
+    )
+    lead = application.get_lead(stored.id or 0)
+    projection = application.lead_payload(lead)["website_deployment"]
+    assert result["deployment_status"] == "published"
+    assert provider.publish_calls == 1
+    assert lead.status == "sales_preview"
+    assert projection["website_stage"] == "published_sales_preview"
+    assert projection["preview_url"] == result["preview_url"]
+    assert projection["last_known_ssl_status"] == ssl_status
+
+
+def test_dashboard_publish_failure_preserves_sales_preview(tmp_path: Path) -> None:
+    provider = FakeDashboardDeploymentProvider(fail_publish=True)
+    application, stored, _ = approved_dashboard(tmp_path, provider)
+    with pytest.raises(CPanelError, match="safe fake deployment failure"):
+        application.publish_sales_preview(stored.id or 0, {"explicitly_authorized": True})
+    assert application.get_lead(stored.id or 0).status == "sales_preview"
+
+
+def test_deployment_status_is_only_called_by_explicit_action_and_is_read_only(tmp_path: Path) -> None:
+    provider = FakeDashboardDeploymentProvider(ssl_status="active")
+    application, stored, _ = approved_dashboard(tmp_path, provider)
+    application.publish_sales_preview(stored.id or 0, {"explicitly_authorized": True})
+    before = application.get_lead(stored.id or 0)
+    assert provider.status_calls == 0
+    status = application.deployment_status(stored.id or 0)
+    after = application.get_lead(stored.id or 0)
+    assert provider.status_calls == 1
+    assert status["ssl_status"] == "active"
+    assert status["domain_configured"] is True
+    assert after == before
+
+
+def test_contacted_published_lead_keeps_published_website_stage(tmp_path: Path) -> None:
+    provider = FakeDashboardDeploymentProvider(ssl_status="active")
+    application, stored, _ = approved_dashboard(tmp_path, provider)
+    application.publish_sales_preview(stored.id or 0, {"explicitly_authorized": True})
+    contacted = application.statuses.change(stored.id or 0, "contacted")
+    projection = application.lead_payload(contacted)["website_deployment"]
+    assert contacted.status == "contacted"
+    assert projection["website_stage"] == "published_sales_preview"
+
+
+def test_dashboard_publish_and_status_routes_accept_no_infrastructure_arguments(tmp_path: Path) -> None:
+    provider = FakeDashboardDeploymentProvider(ssl_status="active")
+    application, stored, _ = approved_dashboard(tmp_path, provider)
+    with running_server(application) as address:
+        rejected, _, _ = call(
+            address, "POST", f"/api/leads/{stored.id}/publish-sales-preview",
+            {"explicitly_authorized": True, "api_token": "must-not-pass"},
+        )
+        published, _, published_body = call(
+            address, "POST", f"/api/leads/{stored.id}/publish-sales-preview",
+            {"explicitly_authorized": True},
+        )
+        status_code, _, status_body = call(
+            address, "GET", f"/api/leads/{stored.id}/deployment-status",
+        )
+    assert rejected == 400 and provider.publish_calls == 1
+    assert published == 200
+    assert json.loads(published_body)["deployment"]["deployment_status"] == "published"
+    safe_status = json.loads(status_body)["deployment_status"]
+    assert status_code == 200 and safe_status["ssl_status"] == "active"
+    serialized = published_body.decode() + status_body.decode()
+    assert "must-not-pass" not in serialized
+    assert "api_token" not in serialized
 
 
 @pytest.mark.parametrize(
@@ -307,6 +450,17 @@ def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     assert "sales_preview','Sales Preview" in source
     assert "Approve Sales Preview" in source
     assert "approve-sales-preview" in source
+    assert "Publish Preview" in source
+    assert "publish-sales-preview" in source
+    assert "explicitly_authorized:true" in source
+    assert "This will publish the approved Sales Preview. It will not contact the prospect." in source
+    assert "Check Deployment Status" in source
+    assert "deployment-status" in source
+    assert "Published — SSL pending" in source
+    assert "Published — HTTPS ready" in source
+    assert "readiness.blocking_reasons" in source
+    assert "website_deployment" in source
+    assert "published_sales_preview" in source
     assert "Website stage" in source
     assert "lead.site_draft?.exists" in source
     assert "Ver Site" in source

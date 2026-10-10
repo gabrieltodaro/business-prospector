@@ -147,6 +147,28 @@ def test_launcher_recovers_allowlisted_cpanel_environment_without_printing_token
     assert "UNRELATED_PRIVATE_VALUE" not in output
 
 
+def test_launcher_dashboard_mode_uses_same_allowlisted_runtime_boundary(tmp_path: Path) -> None:
+    invocation = tmp_path / "dashboard-invocation.txt"
+    fake_python = tmp_path / "controlled-python"
+    fake_python.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "printf '%s\\n' \"$@\" > \"$FAKE_PYTHON_INVOCATION\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = dict(os.environ)
+    env["BUSINESS_PROSPECTOR_PYTHON"] = str(fake_python)
+    env["FAKE_PYTHON_INVOCATION"] = str(invocation)
+    subprocess.run(
+        [str(ROOT / "bin" / "business-prospector-mcp"), "--dashboard", "--port", "8877"],
+        cwd=ROOT, env=env, check=True,
+    )
+    assert invocation.read_text(encoding="utf-8").splitlines() == [
+        "-m", "business_prospector.dashboard", "--port", "8877",
+    ]
+
+
 def test_manifests_do_not_claim_unsupported_ambient_env_interpolation() -> None:
     for name in (".mcp.json", "mcp.json"):
         raw = (ROOT / name).read_text(encoding="utf-8")

@@ -21,7 +21,7 @@ from business_prospector.application.deployment import (
     public_artifact_files,
 )
 from business_prospector.application.technical_deployment import TechnicalDeploymentTarget
-from business_prospector.domain.exceptions import ValidationError
+from business_prospector.domain.exceptions import ProspectorError, ValidationError
 
 ENV_BASE_URL = "BUSINESS_PROSPECTOR_CPANEL_BASE_URL"
 ENV_USERNAME = "BUSINESS_PROSPECTOR_CPANEL_USERNAME"
@@ -35,7 +35,7 @@ DOMAIN_PATTERN = re.compile(
 )
 
 
-class CPanelError(Exception):
+class CPanelError(ProspectorError):
     def __init__(
         self, code: str, message: str, *, response_shape: Mapping[str, Any] | None = None,
         safe_details: Mapping[str, Any] | None = None,
@@ -99,6 +99,16 @@ def cpanel_configuration_status(environment: Mapping[str, str] | None = None) ->
     except ValidationError:
         return {"configured": False, "root_domain": None}
     return config.safe_status() if config else {"configured": False, "root_domain": None}
+
+
+def preview_deployment_provider_from_environment(
+    environment: Mapping[str, str] | None = None,
+) -> HostGatorPreviewDeploymentProvider | None:
+    """Composition helper; constructing the provider performs no network request."""
+    config = CPanelDeploymentConfig.from_environment(environment)
+    if config is None:
+        return None
+    return HostGatorPreviewDeploymentProvider(config, CPanelUapiClient(config))
 
 
 @dataclass(frozen=True, slots=True)
