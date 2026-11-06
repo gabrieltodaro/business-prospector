@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 from typing import Any
 
 from .exceptions import ValidationError
 from .models import BusinessCandidate
+from .normalization import normalize_domain
 from .website_presence import WebsitePresence, classify_website_presence
 
 FIRST_WEBSITE_PRESENCES = {
@@ -69,6 +71,9 @@ class BenchmarkObservation:
             not isinstance(external_place_id, str) or not external_place_id.strip() or len(external_place_id) > 300
         ):
             raise ValidationError("benchmark external_place_id is invalid")
+        features = _bounded_strings(payload.get("features"), "features")
+        if not allow_legacy and any(len(feature) > 100 for feature in features):
+            raise ValidationError("observed feature names are limited to 100 characters")
         return cls(
             name=name,
             website_url=website_url,
@@ -101,12 +106,14 @@ class FeatureFrequency:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "FeatureFrequency":
+        if not isinstance(payload, dict):
+            raise ValidationError("feature frequency must be an object")
         feature = payload.get("feature")
         observed = payload.get("observed_in")
         total = payload.get("total")
         if not isinstance(feature, str) or not feature.strip() or len(feature) > 100:
             raise ValidationError("feature name is required and limited to 100 characters")
-        if not isinstance(observed, int) or not isinstance(total, int) or total < 1 or observed < 0 or observed > total:
+        if type(observed) is not int or type(total) is not int or total < 1 or observed < 0 or observed > total:
             raise ValidationError("feature frequency counts are invalid")
         return cls(feature, observed, total)
 
@@ -124,6 +131,7 @@ class FirstWebsiteMarketReport:
     recommendations: tuple[str, ...]
     confidence: str
     failure_reason: str | None = None
+    selection_id: str | None = None
 
     @classmethod
     def from_dict(
@@ -173,6 +181,29 @@ class FirstWebsiteMarketReport:
             raise ValidationError("complete market research requires features and recommendations")
         if any(item.total != len(benchmarks) for item in features):
             raise ValidationError("feature totals must equal benchmarks inspected")
+        selection_id = payload.get("selection_id")
+        if selection_id is not None and (
+            not isinstance(selection_id, str) or not selection_id.strip() or len(selection_id) > 100
+        ):
+            raise ValidationError("invalid benchmark selection_id")
+        if not allow_legacy:
+            domains = [normalize_domain(item.website_url) for item in benchmarks]
+            if len(set(domains)) != len(domains):
+                raise ValidationError("duplicate benchmark website")
+            place_ids = [item.external_place_id for item in benchmarks if item.external_place_id]
+            if len(set(place_ids)) != len(place_ids):
+                raise ValidationError("duplicate benchmark external_place_id")
+            if status == "complete" and any(not item.facts or not item.features for item in benchmarks):
+                raise ValidationError("complete benchmarks require facts and observed features")
+            counts = Counter(feature for item in benchmarks for feature in set(item.features))
+            if len({item.feature for item in features}) != len(features):
+                raise ValidationError("duplicate common feature")
+            if any(counts[item.feature] != item.observed_in or item.observed_in == 0 for item in features):
+                raise ValidationError("common features must be supported by benchmark observations")
+            if len(counts) > 20:
+                raise ValidationError("observations support at most 20 distinct features")
+            features = tuple(FeatureFrequency(feature, counts[feature], len(benchmarks))
+                             for feature in sorted(counts))
         return cls(
             status=status,
             benchmark_market=benchmark_market,
@@ -182,6 +213,7 @@ class FirstWebsiteMarketReport:
             recommendations=_bounded_strings(payload.get("recommendations"), "recommendations"),
             confidence=confidence,
             failure_reason=failure_reason,
+            selection_id=selection_id,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -194,6 +226,7 @@ class FirstWebsiteMarketReport:
             "recommendations": list(self.recommendations),
             "confidence": self.confidence,
             "failure_reason": self.failure_reason,
+            "selection_id": self.selection_id,
         }
 
 

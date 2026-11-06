@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
+from business_prospector.domain.models import BusinessCandidate, Lead
+from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +49,7 @@ class BusinessDiscoveryProvider(Protocol):
 
 
 class WebsiteAssessmentProvider(Protocol):
-    def assess(self, candidate: BusinessCandidate) -> WebsiteAssessment: ...
+    def assess(self, candidate: BusinessCandidate) -> WebsiteAssessmentReport: ...
 
 
 class LeadRepository(Protocol):
@@ -58,3 +59,5 @@ class LeadRepository(Protocol):
     def update(self, lead_id: int, changes: dict[str, object]) -> Lead: ...
     def find_duplicate(self, candidate: BusinessCandidate | Lead) -> DuplicateMatch | None: ...
     def find_slug_conflict(self, slug: str) -> PersistenceConflict | None: ...
+    def save_benchmark_selection(self, selection_id: str, selection: dict[str, object]) -> None: ...
+    def get_benchmark_selection(self, selection_id: str) -> dict[str, object] | None: ...

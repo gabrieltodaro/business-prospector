@@ -177,3 +177,11 @@ Entao abra `http://127.0.0.1:8765` no proprio Mac Mini (ou use um tunel delibera
 - sem reserva global de preview slug ou reconciliação automática entre remoto e manifesto;
 - sem contact-readiness: contato/outreach continua sendo uma futura operação autorizada;
 - a interface nao inicia Places, Playwright ou MCP; ela apenas opera leads ja persistidos.
+
+## Runtime compartilhado e transicoes
+
+MCP e dashboard usam `<BUSINESS_PROSPECTOR_DATA_DIR>/business-prospector.db`; sem
+essa variavel, usam `~/.openclaw/data/business-prospector/business-prospector.db`.
+`--database` continua tendo precedencia no dashboard. Ambos carregam a mesma
+policy de `BUSINESS_PROSPECTOR_CONFIG` e delegam transicoes a `LeadStatusService`.
+Nenhum banco e movido entre os caminhos automaticamente.

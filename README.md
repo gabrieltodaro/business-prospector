@@ -192,3 +192,10 @@ A publicação controlada de Sales Preview possui agora um adapter [HostGator/cP
 - o MCP não envia mensagens; deploy comercial só ocorre pela ferramenta explícita `publish_sales_preview` após aprovação e autorização separadas;
 - o SQLite usa context managers, timeout, busy timeout e WAL;
 - logs nao incluem credenciais nem payloads completos de websites.
+
+## Phase 1 integration and publication integrity
+
+See [the Phase 1 implementation report](docs/phase-1-implementation.md) for validated
+changes, test results, compatibility requirements and remaining limitations. New research
+qualification requires a stored benchmark selection receipt; publication requires explicit
+approval of the exact validated public file inventory. No automatic deployment is enabled.

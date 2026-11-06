@@ -6,6 +6,7 @@ from pathlib import Path
 
 from business_prospector.application.ports import SearchQuery
 from business_prospector.domain.models import BusinessCandidate, WebsiteAssessment
+from business_prospector.domain.website_assessment import WebsiteAssessmentReport, CriterionEvidence, CRITERIA
 
 
 class FakeBusinessDiscoveryProvider:
@@ -30,5 +31,12 @@ class FakeWebsiteAssessmentProvider:
             item["business"]["name"]: WebsiteAssessment(**item["assessment"]) for item in raw
         }
 
-    def assess(self, candidate: BusinessCandidate) -> WebsiteAssessment:
-        return self._assessments[candidate.name]
+    def assess(self, candidate: BusinessCandidate) -> WebsiteAssessmentReport:
+        assessment = self._assessments[candidate.name]
+        return WebsiteAssessmentReport(candidate.website_url or "", "assessed", {
+            name: CriterionEvidence(
+                "issue" if getattr(assessment, name, False) else "no_issue",
+                (f"Synthetic fixture observation: {name}",),
+                assessment.reason if getattr(assessment, name, False) else None,
+            ) for name in CRITERIA
+        })

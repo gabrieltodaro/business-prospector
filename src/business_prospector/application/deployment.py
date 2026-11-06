@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import tempfile
 from dataclasses import dataclass
@@ -8,8 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from business_prospector.application.artifacts import (
+    artifact_checksum, public_artifact_files, artifact_snapshot,
+)
 from business_prospector.application.ports import LeadRepository
-from business_prospector.application.site_generation import SiteDraftService, validate_generated_site
+from business_prospector.application.site_generation import SiteDraftService
 from business_prospector.domain.exceptions import ValidationError
 
 
@@ -95,40 +97,6 @@ class PreviewDeploymentProvider(Protocol):
     def status(self, preview_slug: str) -> DeploymentStatus: ...
 
 
-def public_artifact_files(site_path: Path) -> tuple[Path, ...]:
-    root = site_path.expanduser().resolve()
-    validate_generated_site(root)
-    allowed: list[Path] = [root / "index.html", root / "styles.css"]
-    assets = root / "assets"
-    if not assets.is_dir() or assets.is_symlink():
-        raise ValidationError("generated site assets directory is invalid")
-    for candidate in sorted(assets.rglob("*")):
-        if candidate.is_symlink():
-            raise ValidationError("generated site contains a symlink")
-        if candidate.is_file():
-            resolved = candidate.resolve()
-            try:
-                resolved.relative_to(assets.resolve())
-            except ValueError as exc:
-                raise ValidationError("generated site asset escapes controlled root") from exc
-            allowed.append(resolved)
-    if len(allowed) > 100:
-        raise ValidationError("generated site contains too many public files")
-    if sum(path.stat().st_size for path in allowed) > 25 * 1024 * 1024:
-        raise ValidationError("generated site exceeds public upload size limit")
-    return tuple(allowed)
-
-
-def artifact_checksum(site_path: Path) -> str:
-    root = site_path.resolve()
-    digest = hashlib.sha256()
-    for path in public_artifact_files(root):
-        relative = path.relative_to(root).as_posix()
-        digest.update(relative.encode("utf-8") + b"\0")
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
-
-
 class SalesPreviewDeploymentService:
     def __init__(
         self, repository: LeadRepository, drafts: SiteDraftService,
@@ -149,52 +117,49 @@ class SalesPreviewDeploymentService:
         draft = self._drafts.inspect(lead.slug or "")
         if not draft.exists or draft.site_path is None:
             raise ValidationError("valid approved site artifact is required")
-        validate_generated_site(draft.site_path)
         manifest_path = draft.site_path / "site-manifest.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            raise ValidationError("approved site manifest is invalid") from exc
-        preview = manifest.get("sales_preview")
-        if not isinstance(preview, dict) or preview.get("preview_status") != "approved_not_published":
-            existing = manifest.get("deployment")
-            if not isinstance(existing, dict) or existing.get("deployment_status") != "published":
+        with artifact_snapshot(draft.site_path) as (artifact, snapshot):
+            manifest = json.loads(artifact.manifest_bytes)
+            preview = manifest.get("sales_preview")
+            if not isinstance(preview, dict) or preview.get("preview_status") not in {"approved_not_published", "published"}:
                 raise ValidationError("Sales Preview approval metadata is required")
-        preview_slug = preview.get("preview_slug") if isinstance(preview, dict) else None
-        if not isinstance(preview_slug, str) or not preview_slug:
-            raise ValidationError("approved preview slug is required")
-        assets = manifest.get("assets")
-        if not isinstance(assets, list) or not assets or any(
-            not isinstance(asset, dict) or asset.get("approval_status") != "approved_for_publish"
-            or asset.get("rights_status") in {"unknown", "do_not_use"}
-            for asset in assets
-        ):
-            raise ValidationError("all rendered assets must be approved for publish")
-        checksum = artifact_checksum(draft.site_path)
-        existing = manifest.get("deployment")
-        if isinstance(existing, dict) and existing.get("deployment_status") == "published":
-            if existing.get("artifact_checksum") != checksum:
-                raise ValidationError("published artifact changed; safe replacement is not supported yet")
-            return DeploymentResult(
-                "published", preview_slug, str(existing.get("preview_url") or ""),
-                int(existing.get("files_uploaded") or 0), str(existing.get("domain_status") or "existing"),
-                str(existing.get("ssl_status") or "unknown"), str(existing.get("deployment_id") or ""),
-                checksum, ("unchanged artifact was already published",),
-                str(existing.get("deployment_mode") or "direct_first_publish"),
-                str(existing.get("cleanup") or "manual_required"),
-                tuple(
-                    item for item in existing.get("uploaded_files", [])
-                    if isinstance(item, str)
-                ),
-            )
-        result = self._provider.publish(draft.site_path, preview_slug)
+            preview_slug = preview.get("preview_slug")
+            if not isinstance(preview_slug, str) or not preview_slug:
+                raise ValidationError("approved preview slug is required")
+            existing = manifest.get("deployment")
+            if existing is not None and not isinstance(existing, dict):
+                raise ValidationError("invalid deployment metadata")
+            if isinstance(existing, dict) and existing.get("deployment_status") == "published":
+                if existing.get("artifact_checksum") != artifact.checksum:
+                    raise ValidationError("published artifact changed; safe replacement is not supported yet")
+            if preview.get("approved_artifact") != artifact.identity():
+                raise ValidationError("stale or missing artifact approval; review and approve this revision again")
+            from .sales_preview import SalesPreviewLifecycleService
+            readiness = SalesPreviewLifecycleService(
+                self._repository, SiteDraftService(snapshot.parent),
+            ).readiness(lead, content_review_acknowledged=preview.get("content_review_acknowledged") is True)
+            if not readiness.ready:
+                raise ValidationError("Sales Preview is not ready: " + "; ".join(readiness.blocking_reasons))
+            if isinstance(existing, dict) and existing.get("deployment_status") == "published":
+                return DeploymentResult(
+                    "published", preview_slug, str(existing.get("preview_url") or ""),
+                    int(existing.get("files_uploaded") or 0), str(existing.get("domain_status") or "existing"),
+                    str(existing.get("ssl_status") or "unknown"), str(existing.get("deployment_id") or ""),
+                    artifact.checksum, ("unchanged artifact was already published",),
+                    str(existing.get("deployment_mode") or "direct_first_publish"),
+                    str(existing.get("cleanup") or "manual_required"),
+                    tuple(item for item in existing.get("uploaded_files", []) if isinstance(item, str)),
+                )
+            # The provider sees an isolated copy of the approved bytes, never the editable draft.
+            result = self._provider.publish(snapshot, preview_slug)
+            if result.artifact_checksum != artifact.checksum:
+                raise ValidationError("provider result does not match approved artifact")
         published_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         manifest["deployment"] = {
             **result.to_dict(), "published_at": published_at, "last_checked_at": None,
         }
-        if isinstance(preview, dict):
-            preview["preview_status"] = "published"
-            preview["preview_url"] = result.preview_url
+        preview["preview_status"] = "published"
+        preview["preview_url"] = result.preview_url
         self._write_manifest(manifest_path, manifest)
         return result
 

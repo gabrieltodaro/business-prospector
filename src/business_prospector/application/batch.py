@@ -209,6 +209,11 @@ class BatchProspectingService:
         legacy = report.to_website_assessment()
         if legacy.issue_count < self._config.minimum_website_issues:
             return QualificationOutcome("not_qualified_website", reason="website issue threshold not met")
+        from .qualification import validate_redesign
+        try:
+            validate_redesign(candidate, report, self._config)
+        except ValidationError as exc:
+            return QualificationOutcome("not_qualified_reputation", reason=str(exc))
         lead = ProspectingService._to_lead(candidate, legacy)
         lead.score = calculate_score(lead, self._config.scoring).total
         lead.status = "qualified"

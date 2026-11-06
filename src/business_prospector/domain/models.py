@@ -147,12 +147,9 @@ class Lead:
         self.validate()
 
     def validate(self) -> None:
-        if not self.name.strip() or not self.city.strip():
-            raise ValidationError("name and city are required")
-        if not 0 <= self.rating <= 5:
-            raise ValidationError("rating must be between 0 and 5")
-        if self.review_count < 0:
-            raise ValidationError("review_count cannot be negative")
+        BusinessCandidate(**{
+            key: getattr(self, key) for key in BusinessCandidate.__dataclass_fields__
+        })
         if self.status not in VALID_STATUSES:
             raise ValidationError(f"invalid status: {self.status}")
         if self.whatsapp_source not in VALID_WHATSAPP_SOURCES:

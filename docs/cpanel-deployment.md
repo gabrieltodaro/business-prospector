@@ -20,6 +20,26 @@ Publication does not change the lead status to `contacted`. `sales_preview` rema
 commercial lifecycle stage; deployment state is stored separately in the private local
 site manifest. No deployment metadata or credential is stored in SQLite.
 
+## Approved revision and public inventory
+
+Commercial publication rechecks readiness and the exact approved file hashes immediately
+before calling the provider. It passes a private temporary snapshot of the approved bytes.
+The cPanel adapter captures and validates all upload bytes before its first remote request;
+it never rereads an editable draft between individual uploads.
+
+The explicit inventory is `index.html`, `styles.css`, and the manifest's `assets[].local_file`
+entries. Only PNG, JPEG, WebP and restricted passive SVG are accepted as assets, with
+matching MIME, signatures and SHA-256. SVG declarations, scripts, event handlers and
+external resources are rejected. The inventory rejects duplicate entries, symlinks,
+traversal, unexpected files/directories and unsafe file types. Private README and manifest
+files are never uploaded. Limits remain 100 public files, 25 MiB total and 8 MiB per image.
+
+Old manifests without an explicit valid inventory must be regenerated or corrected and
+reviewed. Previously approved but unpublished previews require explicit reapproval to
+record their artifact identity. Reapproval of a published preview is unsupported; existing
+published previews may still be inspected, but a publish call without current integrity
+metadata fails closed. Approval does not cause publication.
+
 ## Technical deployment test
 
 A technical deployment test is deliberately distinct from commercial publication:

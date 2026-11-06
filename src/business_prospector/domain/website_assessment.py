@@ -41,7 +41,7 @@ class CriterionEvidence:
         for fact in self.facts:
             if not isinstance(fact, str) or not fact.strip() or len(fact) > 500:
                 raise ValidationError("assessment facts must be non-empty strings up to 500 characters")
-        if self.inference is not None and (not self.inference.strip() or len(self.inference) > 500):
+        if self.inference is not None and (not isinstance(self.inference, str) or not self.inference.strip() or len(self.inference) > 500):
             raise ValidationError("assessment inference must be a non-empty string up to 500 characters")
         if self.outcome != "unknown" and not self.facts:
             raise ValidationError("observed outcomes require at least one fact")
@@ -59,6 +59,10 @@ class WebsiteAssessmentReport:
     failure_reason: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.website_url, str) or not self.website_url:
+            raise ValidationError("assessment website_url is required")
+        if self.final_url is not None and not isinstance(self.final_url, str):
+            raise ValidationError("assessment final_url must be a string")
         validate_http_url(self.website_url, "website_url")
         validate_http_url(self.final_url, "final_url")
         if self.status not in ASSESSMENT_STATUSES:
@@ -66,7 +70,7 @@ class WebsiteAssessmentReport:
         if set(self.criteria) != set(CRITERIA):
             raise ValidationError("assessment must contain exactly the supported criteria")
         if self.failure_reason is not None and (
-            not self.failure_reason.strip() or len(self.failure_reason) > 500
+            not isinstance(self.failure_reason, str) or not self.failure_reason.strip() or len(self.failure_reason) > 500
         ):
             raise ValidationError("failure_reason must be a non-empty string up to 500 characters")
         if self.status == "assessed":
@@ -77,6 +81,8 @@ class WebsiteAssessmentReport:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "WebsiteAssessmentReport":
+        if not isinstance(payload, dict):
+            raise ValidationError("assessment must be an object")
         raw_criteria = payload.get("criteria")
         if not isinstance(raw_criteria, dict):
             raise ValidationError("assessment criteria must be an object")

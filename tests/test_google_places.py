@@ -147,8 +147,10 @@ def test_pagination_stops_at_requested_limit() -> None:
 
 
 class AlwaysProblematicAssessment:
-    def assess(self, candidate: object) -> WebsiteAssessment:
-        return WebsiteAssessment(layout=True, mobile=True, reason="controlled test")
+    def assess(self, candidate):
+        from test_batch import report
+        from business_prospector.domain.website_assessment import WebsiteAssessmentReport
+        return WebsiteAssessmentReport.from_dict({**report(), "website_url": candidate.website_url})
 
 
 def test_google_candidate_composes_with_existing_filtering_and_place_id_dedup(tmp_path: Path) -> None:

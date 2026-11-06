@@ -70,7 +70,7 @@ Abra `http://127.0.0.1:8765`. O servidor não expõe config, banco ou repositór
 
 O MCP oferece `generate_first_website_draft(lead, research, overwrite=false)`. A operação gera apenas artefato local e metadata estruturada; não retorna URL pública.
 
-Para um lead persistido, a ferramenta exige `lead.id` e relê o registro no SQLite. Somente depois de gerar e validar o artefato ela muda o status de `qualified` para `internal_website`. Geração nunca cria `sales_preview`; falha ou conflito preserva o status anterior.
+Para um lead persistido, a ferramenta exige `lead.id` e relê o registro no SQLite. A pesquisa enviada deve corresponder ao report persistido desse lead. Reports antigos completos ainda podem gerar drafts se passarem a validacao atual. Somente depois de gerar e validar o artefato ela muda o status de `qualified` para `internal_website`. Geração nunca cria `sales_preview`; falha ou conflito preserva o status anterior.
 
 Artefato, oportunidade e status são conceitos independentes:
 
@@ -85,6 +85,12 @@ O dashboard detecta artefatos existentes sem alterar leads. `site_ready` legado 
 `SalesPreviewReadiness` revalida estrutura, identidade, oportunidade, conteúdo visível, metadata responsiva, paths e direitos dos assets. `approved_for_draft` é suficiente apenas internamente. Para preview público, cada asset precisa de `approved_for_publish`; assets de site existente nunca recebem essa promoção automaticamente. Assets gerados e com direitos `generated` são elegíveis pela política, mas continuam sujeitos à revisão humana.
 
 `approve_sales_preview` exige confirmação explícita do conteúdo, assets indicados e revisor. Ela registra no manifesto um `preview_slug` proposto e seguro, metadata de aprovação e URL nula. O slug é apenas uma intenção para um futuro endereço como `drlaura.gapps.tech`; disponibilidade, DNS e publicação não são realizados.
+
+A aprovacao inclui `sales_preview.approved_artifact`: versao, checksum agregado e
+inventario exato de paths, SHA-256 e tamanhos. Alterar HTML, CSS, imagens ou o
+conjunto de arquivos bloqueia publicacao ate nova revisao. Previews antigos sem
+essa identidade exigem aprovacao explicita novamente. Um Sales Preview ainda nao
+publicado pode ser reaprovado; substituicao de preview ja publicado continua bloqueada.
 
 `PreviewDeploymentProvider` mantém hosting fora da aplicação. O primeiro adapter é o [HostGator/cPanel UAPI](cpanel-deployment.md), configurado apenas por secrets do runtime. Ele não publica automaticamente ao aprovar, não implementa DNS e não usa FTP, senha cPanel, SSH ou Cloudflare.
 

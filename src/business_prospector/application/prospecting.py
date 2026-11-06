@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
+from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
+from business_prospector.domain.website_assessment import WebsiteAssessmentReport
+from business_prospector.domain.exceptions import ValidationError
 from business_prospector.domain.scoring import calculate_score
+from business_prospector.domain.website_presence import WebsitePresence, classify_website_presence
 
 from .config import ProspectingConfig
 from .ports import BusinessDiscoveryProvider, LeadRepository, SearchQuery, WebsiteAssessmentProvider
@@ -50,7 +53,9 @@ class ProspectingService:
             if not self._passes_reputation(candidate):
                 result.rejected_reputation += 1
                 continue
-            if not candidate.website_url:
+            if classify_website_presence(candidate.website_url).presence not in {
+                WebsitePresence.OWN_WEBSITE, WebsitePresence.HOSTED_WEBSITE,
+            }:
                 # First-website opportunities are handled by the separate market-benchmark
                 # workflow; this redesign service only defers them.
                 result.deferred_first_website.append(candidate)
@@ -58,11 +63,19 @@ class ProspectingService:
             if self._repository.find_duplicate(candidate):
                 result.duplicates += 1
                 continue
-            assessment = self._assessment.assess(candidate)
-            if assessment.issue_count < self._config.minimum_website_issues:
+            report = self._assessment.assess(candidate)
+            from .qualification import validate_redesign
+            try:
+                if not isinstance(report, WebsiteAssessmentReport):
+                    raise ValidationError("structured provider assessment is required")
+                validate_redesign(candidate, report, self._config)
+            except ValidationError:
                 result.rejected_website += 1
                 continue
-            lead = self._to_lead(candidate, assessment)
+            lead = self._to_lead(candidate, report.to_website_assessment())
+            lead.website_assessment = report.to_dict()
+            lead.assessment_status = report.status
+            lead.assessment_checked_at = utc_now()
             lead.score = calculate_score(lead, self._config.scoring).total
             result.leads.append(self._repository.save(lead))
             if len(result.leads) >= self._config.target_leads:

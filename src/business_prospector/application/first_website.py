@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from business_prospector.domain.exceptions import ProspectorError, ValidationError
 from business_prospector.domain.first_website import (
@@ -66,10 +67,12 @@ class BenchmarkSelection:
     selected: tuple[BusinessCandidate, ...]
     rejected: tuple[BenchmarkRejection, ...]
     minimum_required: int
+    selection_id: str
 
     def to_dict(self) -> dict[str, Any]:
         reasons = Counter(item.reason for item in self.rejected)
         return {
+            "selection_id": self.selection_id,
             "country": self.country,
             "benchmark_market": self.benchmark_market,
             "selected": [item.to_dict() for item in self.selected],
@@ -125,6 +128,8 @@ class FirstWebsiteProspectingService:
     def select_benchmarks(
         self, raw_target: dict[str, Any], raw_candidates: list[dict[str, Any]], maximum: int = 2,
     ) -> BenchmarkSelection:
+        if type(maximum) is not int or maximum < 1:
+            raise ValidationError("maximum benchmarks must be a positive integer")
         target = BusinessCandidate(**raw_target)
         policy = self._config.first_website
         benchmark_policy = policy.benchmark_research
@@ -171,6 +176,8 @@ class FirstWebsiteProspectingService:
             pool_match = None
             for previous in seen:
                 pool_match = match_business_identity(item, previous)
+                if pool_match is None and normalize_domain(item.website_url) == normalize_domain(previous.website_url):
+                    pool_match = IdentityMatch("normalized_domain", "strong")
                 if pool_match:
                     break
             if pool_match:
@@ -183,9 +190,14 @@ class FirstWebsiteProspectingService:
                 rejected.append(BenchmarkRejection(item.to_dict(), "max_benchmarks_reached"))
                 continue
             selected.append(item)
+        selection_id = str(uuid4())
+        self._repository.save_benchmark_selection(selection_id, {
+            "target": target.to_dict(), "benchmark_market": benchmark_policy.default_market,
+            "selected": [item.to_dict() for item in selected], "created_at": utc_now(),
+        })
         return BenchmarkSelection(
             len(raw_candidates), benchmark_policy.country, benchmark_policy.default_market,
-            tuple(selected), tuple(rejected), benchmark_policy.minimum_benchmarks,
+            tuple(selected), tuple(rejected), benchmark_policy.minimum_benchmarks, selection_id,
         )
 
     def select_competitors(
@@ -195,7 +207,7 @@ class FirstWebsiteProspectingService:
         return self.select_benchmarks(raw_target, raw_candidates, maximum)
 
     def validate_benchmark_report(
-        self, target: BusinessCandidate, report: FirstWebsiteMarketReport,
+        self, target: BusinessCandidate, report: FirstWebsiteMarketReport, *, require_selection: bool = True,
     ) -> str | None:
         policy = self._config.first_website
         benchmark_policy = policy.benchmark_research
@@ -217,6 +229,26 @@ class FirstWebsiteProspectingService:
                 if benchmark.external_place_id in seen_place_ids:
                     return "duplicate benchmark external_place_id"
                 seen_place_ids.add(benchmark.external_place_id)
+        if report.status != "complete" or not require_selection:
+            return None
+        receipt = self._repository.get_benchmark_selection(report.selection_id) if report.selection_id else None
+        if receipt is None:
+            return "valid benchmark selection_id is required; select benchmarks again"
+        selected_target = receipt["target"]
+        # Identity and research context must both match; contact enrichment may differ.
+        for key in ("external_place_id", "name", "city", "category", "website_url"):
+            if (selected_target.get(key) or "") != (getattr(target, key) or ""):
+                return "benchmark selection belongs to a different target"
+        if receipt["benchmark_market"] != report.benchmark_market:
+            return "benchmark selection market mismatch"
+        selected = receipt["selected"]
+        for benchmark in report.benchmarks:
+            matches = [item for item in selected if all(
+                item.get(key) == getattr(benchmark, key)
+                for key in ("name", "website_url", "category", "rating", "review_count", "external_place_id")
+            )]
+            if len(matches) != 1:
+                return "research benchmark does not match selected reference"
         return None
 
     def qualify_and_save(
@@ -231,7 +263,7 @@ class FirstWebsiteProspectingService:
         except (ProspectorError, TypeError, ValueError) as exc:
             return FirstWebsiteOutcome("invalid", reason=str(exc))
         policy = self._config.first_website
-        invalid_report = self.validate_benchmark_report(candidate, report)
+        invalid_report = self.validate_benchmark_report(candidate, report, require_selection=False)
         if invalid_report:
             return FirstWebsiteOutcome("invalid", reason=invalid_report)
         presence = classify_website_presence(candidate.website_url).presence
@@ -246,6 +278,9 @@ class FirstWebsiteProspectingService:
             return FirstWebsiteOutcome("research_failed", reason=report.failure_reason)
         if report.status != "complete" or len(report.benchmarks) < policy.benchmark_research.minimum_benchmarks:
             return FirstWebsiteOutcome("research_insufficient", reason=report.failure_reason or "insufficient benchmarks")
+        invalid_report = self.validate_benchmark_report(candidate, report)
+        if invalid_report:
+            return FirstWebsiteOutcome("invalid", reason=invalid_report)
         score = calculate_first_website_score(candidate, report, policy.scoring)
         if score.total < policy.minimum_score:
             return FirstWebsiteOutcome("not_qualified_first_website", reason=f"score below threshold: {score.total}")

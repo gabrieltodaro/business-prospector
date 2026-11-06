@@ -51,6 +51,14 @@ def service(tmp_path: Path) -> tuple[FirstWebsiteProspectingService, SQLiteLeadR
     return FirstWebsiteProspectingService(repository, ProspectingConfig()), repository
 
 
+def selected_research(prospecting, target, report):
+    references = [{key: value for key, value in item.items()
+                   if key in BusinessCandidate.__dataclass_fields__} | {"city": "São Paulo, SP"}
+                  for item in report["benchmarks"]]
+    selection = prospecting.select_benchmarks(target, references, maximum=3)
+    return {**report, "selection_id": selection.selection_id}
+
+
 @pytest.mark.parametrize("website", [None, "https://instagram.com/business", "https://linktr.ee/business"])
 def test_first_website_eligibility_accepts_missing_social_and_profile(website: str | None) -> None:
     item = BusinessCandidate(**candidate(website_url=website))
@@ -254,7 +262,7 @@ def test_agent_cannot_supply_first_website_score() -> None:
 
 def test_qualify_save_persists_type_research_batch_and_is_idempotent(tmp_path: Path) -> None:
     prospecting, repository = service(tmp_path)
-    result = prospecting.qualify_and_save(candidate(), research(), "batch-first")
+    result = prospecting.qualify_and_save(candidate(), selected_research(prospecting, candidate(), research()), "batch-first")
     assert result.outcome == "saved_qualified_first_website"
     assert result.lead is not None
     stored = repository.get(result.lead.id or 0)
@@ -290,7 +298,7 @@ def test_distinct_place_ids_with_laura_slug_return_conflict_without_mutation(tmp
     market_research = research()
     for benchmark in market_research["benchmarks"]:  # type: ignore[union-attr]
         benchmark["category"] = "dentist"
-    outcome = prospecting.qualify_and_save(raw, market_research, "batch-new")
+    outcome = prospecting.qualify_and_save(raw, selected_research(prospecting, raw, market_research), "batch-new")
 
     assert outcome.outcome == "identity_conflict"
     assert outcome.to_dict()["conflict"] == {

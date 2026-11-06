@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from business_prospector.application.artifacts import capture_artifact, artifact_snapshot
 from business_prospector.application.ports import LeadRepository
 from business_prospector.application.deployment import PreviewDeploymentProvider
 from business_prospector.application.site_generation import SiteDraftService, validate_generated_site
@@ -110,6 +111,7 @@ class SalesPreviewLifecycleService:
                 False, ("valid generated site is required",), (), False, False, 0, (), 0, None,
             )
         try:
+            capture_artifact(info.site_path)
             validate_generated_site(info.site_path)
             manifest = json.loads((info.site_path / "site-manifest.json").read_text(encoding="utf-8"))
             identity = manifest.get("lead_identity")
@@ -182,7 +184,7 @@ class SalesPreviewLifecycleService:
         lead = self._repository.get(lead_id)
         if lead is None:
             raise ValidationError("persisted lead not found")
-        if lead.status not in INTERNAL_STATUSES:
+        if lead.status not in INTERNAL_STATUSES | {"sales_preview"}:
             raise ValidationError("lead must be in Internal Website before approval")
         if content_review_acknowledged is not True:
             raise ValidationError("content review acknowledgement is required")
@@ -201,7 +203,19 @@ class SalesPreviewLifecycleService:
         info = self._drafts.inspect(lead.slug or "")
         assert info.site_path is not None
         manifest_path = info.site_path / "site-manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        with artifact_snapshot(info.site_path) as (artifact, snapshot):
+            snapshot_readiness = SalesPreviewLifecycleService(
+                self._repository, SiteDraftService(snapshot.parent),
+            ).readiness(lead, content_review_acknowledged=True, publish_asset_keys=keys)
+            if not snapshot_readiness.ready:
+                raise ValidationError("sales preview snapshot is not ready")
+            approved_artifact = artifact.identity()
+            manifest = json.loads(artifact.manifest_bytes)
+        deployment = manifest.get("deployment")
+        if deployment is not None and not isinstance(deployment, dict):
+            raise ValidationError("invalid deployment metadata")
+        if isinstance(deployment, dict) and deployment.get("deployment_status") == "published":
+            raise ValidationError("published preview cannot be replaced or reapproved")
         manifest_keys = {item["key"] for item in manifest["assets"]}
         unknown = keys - manifest_keys
         if unknown:
@@ -217,6 +231,7 @@ class SalesPreviewLifecycleService:
             "preview_slug": preview_slug, "preview_status": "approved_not_published",
             "preview_url": None, "approved_at": approved_at, "approved_by": approved_by,
             "content_review_acknowledged": True,
+            "approved_artifact": approved_artifact,
         }
         self._write_manifest(manifest_path, manifest)
         updated = self._repository.update(lead_id, {"status": "sales_preview"})

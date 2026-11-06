@@ -3,6 +3,8 @@ from __future__ import annotations
 from business_prospector.application.ports import LeadRepository
 from business_prospector.domain.exceptions import LeadNotFoundError, ValidationError
 from business_prospector.domain.models import PIPELINE_STATUSES, Lead
+from business_prospector.application.config import ProspectingConfig
+from business_prospector.application.site_generation import SiteDraftService
 
 
 _LEGACY_STATUS = {"site_ready": "internal_website", "rejected": "discarded"}
@@ -32,8 +34,13 @@ def can_transition(current_status: str, target_status: str) -> bool:
 class LeadStatusService:
     """The single application boundary for commercial pipeline movement."""
 
-    def __init__(self, repository: LeadRepository) -> None:
+    def __init__(
+        self, repository: LeadRepository, *, drafts: SiteDraftService | None = None,
+        config: ProspectingConfig | None = None,
+    ) -> None:
         self._repository = repository
+        self._drafts = drafts
+        self._config = config or ProspectingConfig()
 
     @property
     def allowed_statuses(self) -> tuple[str, ...]:
@@ -42,15 +49,26 @@ class LeadStatusService:
     def change(self, lead_id: int, status: str) -> Lead:
         if not isinstance(lead_id, int) or isinstance(lead_id, bool) or lead_id < 1:
             raise ValidationError("lead_id must be a positive integer")
+        lead = self._repository.get(lead_id)
+        if lead is None:
+            raise LeadNotFoundError(f"lead not found: {lead_id}")
+        self.validate(lead, status)
+        return self._repository.update(lead_id, {"status": status})
+
+    def validate(self, lead: Lead, status: str, *, proposed: Lead | None = None) -> None:
+        """Validate without writing, so compound edits can commit only after all checks."""
         if status not in PIPELINE_STATUSES:
             raise ValidationError(f"invalid pipeline status: {status}")
         if status == "sales_preview":
             raise ValidationError("Sales Preview requires explicit approval")
-        lead = self._repository.get(lead_id)
-        if lead is None:
-            raise LeadNotFoundError(f"lead not found: {lead_id}")
         if not can_transition(lead.status, status):
             raise ValidationError(
                 f"pipeline transition is not allowed: {lead.status} -> {status}"
             )
-        return self._repository.update(lead_id, {"status": status})
+        if status == "internal_website":
+            draft = self._drafts.inspect(lead.slug or "") if self._drafts else None
+            if draft is None or not draft.exists:
+                raise ValidationError("Internal Website requires a valid generated site")
+        if status == "qualified":
+            from .qualification import validate_qualified_lead
+            validate_qualified_lead(proposed or lead, self._config, self._repository)

@@ -13,7 +13,7 @@ from business_prospector.domain.normalization import normalize_address, normaliz
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.domain.first_website import FirstWebsiteMarketReport
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 LEAD_COLUMNS = (
     "id", "external_place_id", "slug", "name", "normalized_name", "category", "city",
@@ -31,6 +31,10 @@ ALL_LEAD_COLUMNS = LEAD_COLUMNS + (
 )
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS benchmark_selections (
+    selection_id TEXT PRIMARY KEY,
+    selection_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     external_place_id TEXT,
@@ -175,6 +179,20 @@ class SQLiteLeadRepository:
     @property
     def database_path(self) -> Path:
         return self._path
+
+    def save_benchmark_selection(self, selection_id: str, selection: dict[str, object]) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT INTO benchmark_selections (selection_id, selection_json) VALUES (?, ?)",
+                (selection_id, json.dumps(selection, ensure_ascii=False, sort_keys=True)),
+            )
+
+    def get_benchmark_selection(self, selection_id: str) -> dict[str, object] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT selection_json FROM benchmark_selections WHERE selection_id = ?", (selection_id,),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
 
     def save(self, lead: Lead) -> Lead:
         lead.validate()

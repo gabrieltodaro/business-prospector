@@ -16,17 +16,15 @@ from business_prospector.application.first_website import FirstWebsiteProspectin
 from business_prospector.application.ports import SearchQuery
 from business_prospector.application.prospecting import ProspectingService
 from business_prospector.application.site_generation import (
+    SiteDraftService,
     PersistedSiteGenerationWorkflow,
     SiteGenerationService,
     controlled_sites_root,
-    validate_generated_site,
 )
 from business_prospector.application.site_assets import SiteAssetCandidateValidator
 from business_prospector.application.sales_preview import SalesPreviewLifecycleService
 from business_prospector.domain.exceptions import ProspectorError
-from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment
-from business_prospector.domain.scoring import calculate_score
-from business_prospector.domain.scoring import calculate_first_website_score
+from business_prospector.domain.models import BusinessCandidate, WebsiteAssessment
 from business_prospector.domain.first_website import FirstWebsiteMarketReport
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.infrastructure.fake_providers import (
@@ -43,22 +41,22 @@ from business_prospector.infrastructure.cpanel import (
     cpanel_configuration_status,
 )
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
-from business_prospector.package_resources import default_config_resource, fake_dentists_resource
+from business_prospector.package_resources import fake_dentists_resource
+from business_prospector.application.runtime import data_directory
+from business_prospector.application.lead_update import LeadUpdateService
+from business_prospector.application.lead_status import LeadStatusService
 
 LOGGER = logging.getLogger("business_prospector.mcp")
 mcp = FastMCP("business-prospector")
 
 
 def _data_dir() -> Path:
-    configured = os.environ.get("BUSINESS_PROSPECTOR_DATA_DIR")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return (Path.home() / ".openclaw" / "data" / "business-prospector").resolve()
+    return data_directory()
 
 
 def _config_resource() -> Traversable:
-    configured = os.environ.get("BUSINESS_PROSPECTOR_CONFIG")
-    return Path(configured).expanduser().resolve() if configured else default_config_resource()
+    from business_prospector.application.runtime import config_resource
+    return config_resource()
 
 
 def _repository() -> SQLiteLeadRepository:
@@ -89,7 +87,7 @@ def list_leads(limit: int = 100) -> dict[str, Any]:
     """List prospecting leads ordered by score, then review count."""
     try:
         return _response("list_leads", [lead.to_dict() for lead in _repository().list(limit)])
-    except (ProspectorError, ValueError, OSError, sqlite3.Error) as exc:
+    except (ProspectorError, ValueError, TypeError, OSError, sqlite3.Error) as exc:
         LOGGER.warning("list_leads failed: %s", exc)
         return _response("list_leads", error=str(exc))
 
@@ -100,7 +98,7 @@ def get_lead(lead_id: int) -> dict[str, Any]:
     try:
         lead = _repository().get(lead_id)
         return _response("get_lead", lead.to_dict() if lead else None, None if lead else "lead not found")
-    except (ProspectorError, ValueError, OSError, sqlite3.Error) as exc:
+    except (ProspectorError, ValueError, TypeError, OSError, sqlite3.Error) as exc:
         LOGGER.warning("get_lead failed for %s: %s", lead_id, exc)
         return _response("get_lead", error=str(exc))
 
@@ -126,7 +124,7 @@ def find_duplicate(
         return _response("find_duplicate", None if match is None else {
             "lead_id": match.lead_id, "match_type": match.match_type, "confidence": match.confidence,
         })
-    except (ProspectorError, ValueError, OSError, sqlite3.Error) as exc:
+    except (ProspectorError, ValueError, TypeError, OSError, sqlite3.Error) as exc:
         LOGGER.warning("find_duplicate failed: %s", exc)
         return _response("find_duplicate", error=str(exc))
 
@@ -156,30 +154,33 @@ def save_lead(
     email: str = "",
     instagram: str = "",
     source: str = "manual",
+    website_assessment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate, deterministically score, deduplicate, and save one qualified lead."""
     try:
-        assessment = WebsiteAssessment(
+        if website_assessment is None:
+            raise ValueError("structured website_assessment is required; use qualify_and_save_candidate")
+        report = WebsiteAssessmentReport.from_dict(website_assessment)
+        expected = WebsiteAssessment(
             layout_issue, mobile_issue, cta_issue, content_issue, social_proof_issue, platform_issue,
             qualification_reason,
         )
-        lead = Lead(
+        if report.to_website_assessment() != expected:
+            raise ValueError("assessment flags and reason must match structured evidence")
+        candidate = BusinessCandidate(
             name=name, category=category, city=city, rating=rating, review_count=review_count,
-            website_url=website_url, assessment=assessment, external_place_id=external_place_id or None,
+            website_url=website_url, external_place_id=external_place_id or None,
             address=address or None, maps_url=maps_url or None, phone=phone or None,
             whatsapp=whatsapp or None, whatsapp_confirmed=whatsapp_confirmed,
             whatsapp_source=whatsapp_source, email=email or None, instagram=instagram or None, source=source,
         )
-        repository = _repository()
-        duplicate = repository.find_duplicate(lead)
-        if duplicate:
-            return _response("save_lead", error=f"duplicate lead {duplicate.lead_id} ({duplicate.match_type})")
-        config = ProspectingConfig.from_resource(_config_resource())
-        if assessment.issue_count < config.minimum_website_issues:
-            return _response("save_lead", error="website does not meet the configured issue threshold")
-        lead.score = calculate_score(lead, config.scoring).total
-        return _response("save_lead", repository.save(lead).to_dict())
-    except (ProspectorError, ValueError, OSError, sqlite3.Error) as exc:
+        outcome = BatchProspectingService(
+            _repository(), ProspectingConfig.from_resource(_config_resource()),
+        ).qualify_and_save(candidate.to_dict(), report.to_dict(), BatchProspectingService.new_batch_id())
+        if outcome.lead is None:
+            return _response("save_lead", error=outcome.reason or outcome.outcome)
+        return _response("save_lead", outcome.lead.to_dict())
+    except (ProspectorError, ValueError, TypeError, OSError, sqlite3.Error) as exc:
         LOGGER.warning("save_lead failed for %r: %s", name, exc)
         return _response("save_lead", error=str(exc))
 
@@ -208,37 +209,11 @@ def update_lead(
     try:
         changes = {key: value for key, value in locals().items() if key != "lead_id" and value is not None}
         repository = _repository()
-        current = repository.get(lead_id)
-        if current is None:
-            raise ValueError("lead not found")
-        if status in {"sales_preview", "site_ready"}:
-            raise ValueError("website lifecycle status requires its controlled application operation")
-        if status == "internal_website":
-            draft = SiteDraftService(_sites_root()).inspect(current.slug or "")
-            if not draft.exists or draft.site_path is None:
-                raise ValueError("Internal Website requires a valid generated site")
-            validate_generated_site(draft.site_path)
-        lead = repository.update(lead_id, changes)
         config = ProspectingConfig.from_resource(_config_resource())
-        if lead.opportunity_type == "first_website" and lead.market_research is not None:
-            candidate = BusinessCandidate(
-                name=lead.name, category=lead.category, city=lead.city, rating=lead.rating,
-                review_count=lead.review_count, website_url=lead.website_url or None,
-                external_place_id=lead.external_place_id, address=lead.address, maps_url=lead.maps_url,
-                phone=lead.phone, whatsapp=lead.whatsapp, whatsapp_confirmed=lead.whatsapp_confirmed,
-                whatsapp_source=lead.whatsapp_source, email=lead.email, instagram=lead.instagram,
-                source=lead.source,
-            )
-            lead.score = calculate_first_website_score(
-                candidate, FirstWebsiteMarketReport.from_dict(
-                    lead.market_research, allow_legacy=True,
-                ), config.first_website.scoring,
-            ).total
-        else:
-            lead.score = calculate_score(lead, config.scoring).total
-        lead = repository.update(lead_id, {"score": lead.score})
+        statuses = LeadStatusService(repository, drafts=SiteDraftService(_sites_root()), config=config)
+        lead = LeadUpdateService(repository, statuses, config).update(lead_id, changes)
         return _response("update_lead", lead.to_dict())
-    except (ProspectorError, ValueError, OSError, sqlite3.Error) as exc:
+    except (ProspectorError, ValueError, TypeError, OSError, sqlite3.Error) as exc:
         LOGGER.warning("update_lead failed for %s: %s", lead_id, exc)
         return _response("update_lead", error=str(exc))
 
@@ -391,17 +366,17 @@ def validate_first_website_market_research(research: dict[str, Any]) -> dict[str
         from business_prospector.domain.first_website import FirstWebsiteMarketReport
         report = FirstWebsiteMarketReport.from_dict(research)
         config = ProspectingConfig.from_resource(_config_resource())
-        benchmark_policy = config.first_website.benchmark_research
-        if report.benchmark_market != benchmark_policy.default_market:
-            raise ValueError("benchmark_market does not match configured market")
-        if any(
-            item.rating is None or item.rating < benchmark_policy.minimum_rating or
-            item.review_count is None or item.review_count < benchmark_policy.minimum_reviews
-            for item in report.benchmarks
-        ):
-            raise ValueError("market research contains benchmark below configured reputation policy")
+        repository = _repository()
+        receipt = repository.get_benchmark_selection(report.selection_id) if report.selection_id else None
+        if receipt is None:
+            raise ValueError("valid benchmark selection_id is required")
+        reason = FirstWebsiteProspectingService(repository, config).validate_benchmark_report(
+            BusinessCandidate(**receipt["target"]), report,
+        )
+        if reason:
+            raise ValueError(reason)
         return _response("validate_first_website_market_research", {"report": report.to_dict()})
-    except (ProspectorError, TypeError, ValueError) as exc:
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         return _response("validate_first_website_market_research", error=str(exc))
 
 

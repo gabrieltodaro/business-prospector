@@ -70,3 +70,18 @@ Never persist full HTML, scripts, arbitrary page dumps, secrets, or prompt-like 
 ## No-website future opportunity
 
 Businesses without websites remain outside the redesign pipeline. The separate `first_website` pipeline considers eligible businesses rated at least 3.5, researches strong market benchmarks in the configured market, infers category expectations from bounded evidence, and supports an original from-scratch strategy. It does not clone local competitors.
+
+## Phase 1 write validation
+
+All qualification write paths enforce reputation, owned/hosted website presence,
+issue thresholds and structured evidence. `save_lead` now requires
+`website_assessment`; legacy flags and reason must match the parsed report. Prefer
+`qualify_and_save_candidate(candidate, assessment, batch_id)`. Boolean flags alone
+are no longer proof of qualification. Provider-based prospecting also requires a
+`WebsiteAssessmentReport`; the offline fake provider supplies explicit synthetic evidence.
+
+MCP compound edits validate the complete proposed lead before one repository write.
+Both MCP and dashboard delegate status changes to `LeadStatusService`. A transition
+to `qualified`, or an MCP edit retaining that status, must satisfy current qualification
+rules. Legacy rows remain readable, but missing evidence can block these writes.
+There is no automatic evidence backfill or claim that historical qualification is valid.

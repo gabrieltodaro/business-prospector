@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -122,7 +123,11 @@ def site(tmp_path: Path) -> Path:
     )
     (root / "styles.css").write_text("@media(min-width:40rem){body{display:block}}", encoding="utf-8")
     (root / "assets" / "hero.svg").write_text("<svg></svg>", encoding="utf-8")
-    (root / "site-manifest.json").write_text('{"private":"metadata"}', encoding="utf-8")
+    (root / "site-manifest.json").write_text(json.dumps({"private": "metadata", "assets": [{
+        "key": "hero", "local_file": "assets/hero.svg", "mime_type": "image/svg+xml",
+        "source_type": "generated", "rights_status": "generated",
+        "checksum": hashlib.sha256(b"<svg></svg>").hexdigest(),
+    }]}), encoding="utf-8")
     (root / "README.md").write_text("internal", encoding="utf-8")
     return root
 

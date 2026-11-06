@@ -17,10 +17,9 @@ from business_prospector.application.deployment import (
     DeploymentResult,
     DeploymentStatus,
     UnpublishResult,
-    artifact_checksum,
-    public_artifact_files,
 )
 from business_prospector.application.technical_deployment import TechnicalDeploymentTarget
+from business_prospector.application.artifacts import validated_artifact
 from business_prospector.domain.exceptions import ProspectorError, ValidationError
 
 ENV_BASE_URL = "BUSINESS_PROSPECTOR_CPANEL_BASE_URL"
@@ -358,8 +357,8 @@ class HostGatorPreviewDeploymentProvider:
     def publish(self, site_path: Path, preview_slug: str) -> DeploymentResult:
         target = self.target(preview_slug)
         slug = target.preview_slug
-        files = public_artifact_files(site_path)
-        checksum = artifact_checksum(site_path)
+        artifact = validated_artifact(site_path)
+        checksum = artifact.checksum
         deployment_id = checksum[:16]
         base_dir = _safe_remote_path(self._config.base_dir)
         final_dir = _safe_remote_path(f"{base_dir}/{slug}")
@@ -371,16 +370,15 @@ class HostGatorPreviewDeploymentProvider:
         domain = self.ensure_subdomain(slug)
         uploaded = 0
         uploaded_files: list[str] = []
-        root = site_path.resolve()
-        for path in files:
-            relative = path.relative_to(root)
+        for item in artifact.files:
+            relative = Path(item.path)
             remote_parent = final_dir
             if relative.parent != Path("."):
                 remote_parent = _safe_remote_path(
                     f"{final_dir}/{relative.parent.as_posix()}"
                 )
             upload = UploadFile(
-                relative.name, path.read_bytes(),
+                relative.name, item.content,
                 mimetypes.guess_type(relative.name)[0] or "application/octet-stream",
             )
             try:

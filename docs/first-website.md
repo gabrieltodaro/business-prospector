@@ -28,10 +28,17 @@ Depois dos filtros, Python ordena deterministicamente por rating decrescente, re
 
 O FieldMask Places existente e reutilizado, sem Place Details, fotos, review text ou horarios. A API oficial recomenda FieldMask explicito para controlar dados e custo: [Places Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search).
 
+A selecao retorna `selection_id`, um recibo persistido em `benchmark_selections`.
+Inclua esse valor no relatorio; validacao e qualificacao verificam o alvo, mercado e
+identidade/metadados das referencias selecionadas. Dois Place IDs distintos nao
+permitem contar o mesmo dominio duas vezes como benchmark. A identidade geral de
+leads continua usando Place ID com precedencia.
+
 ## Relatorio validado
 
 ```json
 {
+  "selection_id": "<selection_id retornado por select_first_website_benchmarks>",
   "benchmark_market": "São Paulo, SP",
   "status": "complete",
   "benchmarks": [
@@ -43,6 +50,16 @@ O FieldMask Places existente e reutilizado, sem Place Details, fotos, review tex
       "review_count": 1000,
       "external_place_id": "place-id",
       "facts": ["CTA de contato visivel"],
+      "features": ["whatsapp_cta", "services"]
+    },
+    {
+      "name": "Benchmark B",
+      "website_url": "https://reference.example.org",
+      "category": "dentist",
+      "rating": 4.8,
+      "review_count": 500,
+      "external_place_id": "place-id-b",
+      "facts": ["Contato e servicos visiveis"],
       "features": ["whatsapp_cta", "services"]
     }
   ],
@@ -58,6 +75,12 @@ O FieldMask Places existente e reutilizado, sem Place Details, fotos, review tex
 
 Facts sao observacoes. Inferences interpretam o conjunto. Recommendations sugerem estrutura original. Nenhuma recomendacao vira fato e nada autoriza copiar design, texto, marca, imagem ou conteudo proprietario. Strings, listas e benchmarks sao limitados; pesquisa completa exige pelo menos dois benchmarks. HTML, snapshots, scripts e screenshots nao sao persistidos.
 
+Cada benchmark completo exige `facts` e `features` nao vazios. Contagens informadas
+que contradizem as observacoes sao recusadas. Python deriva todos os recursos
+observados (ate 20 distintos), com contagem por site e ordenacao alfabetica;
+repetir um recurso no mesmo site nao aumenta a contagem. `common_features` inclui
+tambem recursos observados em apenas uma referencia, com sua frequencia real.
+
 ## Score separado
 
 O score 0–100 de primeiro site usa:
@@ -71,7 +94,7 @@ Rating/reviews ainda sao essenciais; ausencia de site sozinha nao garante score 
 
 ## Persistencia e dashboard
 
-Schema v4 ja armazena `opportunity_type`, motivo de primeiro site e JSON/status/timestamp da pesquisa. `benchmark_market` e os benchmarks utilizados vivem no JSON validado, sem nova coluna ou migracao. Registros antigos com `competitors` continuam legiveis e sao apresentados como benchmarks legados sem mercado conhecido.
+Schema v7 adiciona a tabela de recibos `benchmark_selections`, sem reescrever leads. Schema v4 ja armazena `opportunity_type`, motivo de primeiro site e JSON/status/timestamp da pesquisa. `benchmark_market` e os benchmarks utilizados vivem no JSON validado, sem nova coluna em leads. A inicializacao aplica a extensao aditiva do schema. Registros antigos com `competitors` continuam legiveis e sao apresentados como benchmarks legados sem mercado conhecido.
 
 O Kanban mostra badges `Redesign` ou `Primeiro Site`. O detalhe mostra cidade do lead, mercado, benchmarks, rating/reviews, facts, features, inferences, recommendations, confidence, score e batch. Tudo usa DOM textual seguro.
 

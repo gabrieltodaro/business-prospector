@@ -19,11 +19,11 @@ from business_prospector.application.deployment import (
     SalesPreviewDeploymentService,
 )
 from business_prospector.application.lead_status import LeadStatusService
+from business_prospector.application.runtime import database_path, config_resource
 from business_prospector.application.prospecting import ProspectingService
 from business_prospector.application.site_generation import (
     SiteDraftService,
     controlled_sites_root,
-    validate_generated_site,
 )
 from business_prospector.application.sales_preview import SalesPreviewLifecycleService
 from business_prospector.application.website_projection import WebsiteDeploymentProjectionService
@@ -57,9 +57,12 @@ class DashboardApplication:
         deployment_provider: PreviewDeploymentProvider | None = None,
     ) -> None:
         self.repository = repository
-        self.statuses = LeadStatusService(repository)
         self.drafts = SiteDraftService(
             sites_root or controlled_sites_root(repository.database_path.parent)
+        )
+        self.statuses = LeadStatusService(
+            repository, drafts=self.drafts,
+            config=ProspectingConfig.from_resource(config_resource()),
         )
         self.sales_previews = SalesPreviewLifecycleService(repository, self.drafts)
         self.website_projections = WebsiteDeploymentProjectionService(self.drafts)
@@ -99,12 +102,6 @@ class DashboardApplication:
         return lead
 
     def change_status(self, lead_id: int, status: str) -> Lead:
-        if status == "internal_website":
-            lead = self.get_lead(lead_id)
-            draft = self.drafts.inspect(lead.slug or "")
-            if not draft.exists or draft.site_path is None:
-                raise ValidationError("Internal Website requires a valid generated site")
-            validate_generated_site(draft.site_path)
         return self.statuses.change(lead_id, status)
 
     def lead_payload(self, lead: Lead) -> dict[str, Any]:
@@ -379,7 +376,7 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
 
 
 def _default_database() -> Path:
-    return Path.home() / ".openclaw" / "data" / "business-prospector" / "business-prospector.db"
+    return database_path()
 
 
 def _seed_demo(database: Path) -> None:

@@ -172,6 +172,10 @@ class _SiteHTMLValidator(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tags.add(tag)
+        if tag in {"script", "iframe", "object", "embed", "base"}:
+            self.errors.append("active embedded content is not allowed")
+        if any(key.lower().startswith("on") for key, _ in attrs):
+            self.errors.append("inline event handlers are not allowed")
         values = dict(attrs)
         for key in ("href", "src"):
             value = values.get(key)
@@ -371,7 +375,12 @@ class PersistedSiteGenerationWorkflow:
             raise ValidationError("persisted lead not found")
         if lead.status != "qualified":
             raise ValidationError("persisted lead must have qualified status")
-        result = self._generator.generate(lead.to_dict(), research, overwrite=overwrite)
+        from business_prospector.domain.first_website import FirstWebsiteMarketReport
+        supplied = FirstWebsiteMarketReport.from_dict(research).to_dict()
+        stored = FirstWebsiteMarketReport.from_dict(lead.market_research).to_dict()
+        if supplied != stored:
+            raise ValidationError("generation research must match the persisted lead research")
+        result = self._generator.generate(lead.to_dict(), supplied, overwrite=overwrite)
         if not result.ok:
             return result, None
         updated = self._repository.update(lead_id, {"status": "internal_website"})
