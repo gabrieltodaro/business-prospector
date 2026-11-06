@@ -1,0 +1,295 @@
+[
+  {
+    "business": {
+      "name": "Clínica Horizonte Demo",
+      "category": "dentist",
+      "city": "Vila Exemplo, SP",
+      "rating": 4.8,
+      "review_count": 120,
+      "website_url": null,
+      "external_place_id": "synthetic-dental",
+      "address": "Rua da Demonstração, 100",
+      "phone": "+55 11 0000-0000",
+      "source": "synthetic_fixture"
+    },
+    "research": {
+      "status": "complete",
+      "benchmark_market": "São Paulo, SP",
+      "benchmarks": [
+        {
+          "name": "Referência sintética 1",
+          "category": "dentist",
+          "website_url": "https://dentist-reference-1.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "dentist-ref-1",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "services",
+            "faq",
+            "appointments",
+            "location",
+            "credentials"
+          ]
+        },
+        {
+          "name": "Referência sintética 2",
+          "category": "dentist",
+          "website_url": "https://dentist-reference-2.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "dentist-ref-2",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "services",
+            "faq",
+            "appointments",
+            "location",
+            "credentials"
+          ]
+        }
+      ],
+      "common_features": [
+        {
+          "feature": "services",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "faq",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "appointments",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "location",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "credentials",
+          "observed_in": 2,
+          "total": 2
+        }
+      ],
+      "inferences": [
+        "A informação mais procurada deve ter prioridade no conteúdo."
+      ],
+      "recommendations": [
+        "Usar conteúdo próprio e verificado com navegação clara."
+      ],
+      "design_priorities": [
+        "services",
+        "faq"
+      ],
+      "confidence": "high",
+      "failure_reason": null
+    },
+    "reviewed_content": {
+      "reviewed_by": "Offline synthetic fixture reviewer",
+      "reviewed_at": "2026-11-06T12:00:00+00:00",
+      "sources": [
+        {
+          "id": "synthetic-brief",
+          "kind": "business_provided",
+          "reference": "Entirely synthetic demonstration brief; not a real business or credential."
+        }
+      ],
+      "facts": {
+        "services": {
+          "value": [
+            "Avaliação odontológica",
+            "Acompanhamento preventivo",
+            "Orientação de higiene bucal"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "biography": {
+          "value": "Um exemplo fictício de clínica local, criado para demonstrar uma apresentação clara de serviços e informações de atendimento.",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "opening_hours": {
+          "value": [
+            "Segunda a sexta: 09h às 18h"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "faq": {
+          "value": [
+            {
+              "question": "Como solicitar uma avaliação?",
+              "answer": "Neste exemplo fictício, o canal de agendamento reúne as opções de contato."
+            },
+            {
+              "question": "Onde fica a clínica?",
+              "answer": "O endereço informado nesta demonstração é fictício e serve apenas para avaliação do layout."
+            }
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "booking_url": {
+          "value": "https://booking.example/dental-demo",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "business": {
+      "name": "Mesa de Oliva Demo",
+      "category": "restaurant",
+      "city": "Vila Exemplo, SP",
+      "rating": 4.8,
+      "review_count": 120,
+      "website_url": null,
+      "external_place_id": "synthetic-restaurant",
+      "address": "Rua da Demonstração, 200",
+      "phone": "+55 11 0000-0000",
+      "source": "synthetic_fixture"
+    },
+    "research": {
+      "status": "complete",
+      "benchmark_market": "São Paulo, SP",
+      "benchmarks": [
+        {
+          "name": "Referência sintética 1",
+          "category": "restaurant",
+          "website_url": "https://restaurant-reference-1.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "restaurant-ref-1",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "menu",
+            "opening_hours",
+            "reservations",
+            "about",
+            "location"
+          ]
+        },
+        {
+          "name": "Referência sintética 2",
+          "category": "restaurant",
+          "website_url": "https://restaurant-reference-2.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "restaurant-ref-2",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "menu",
+            "opening_hours",
+            "reservations",
+            "about",
+            "location"
+          ]
+        }
+      ],
+      "common_features": [
+        {
+          "feature": "menu",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "opening_hours",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "reservations",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "about",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "location",
+          "observed_in": 2,
+          "total": 2
+        }
+      ],
+      "inferences": [
+        "A informação mais procurada deve ter prioridade no conteúdo."
+      ],
+      "recommendations": [
+        "Usar conteúdo próprio e verificado com navegação clara."
+      ],
+      "design_priorities": [
+        "menu",
+        "opening_hours"
+      ],
+      "confidence": "high",
+      "failure_reason": null
+    },
+    "reviewed_content": {
+      "reviewed_by": "Offline synthetic fixture reviewer",
+      "reviewed_at": "2026-11-06T12:00:00+00:00",
+      "sources": [
+        {
+          "id": "synthetic-brief",
+          "kind": "business_provided",
+          "reference": "Entirely synthetic demonstration brief; not a real business or credential."
+        }
+      ],
+      "facts": {
+        "menu": {
+          "value": [
+            "Abóbora assada, grãos e ervas — R$ 38",
+            "Massa fresca com tomate e manjericão — R$ 46",
+            "Pera ao forno com especiarias — R$ 22"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "opening_hours": {
+          "value": [
+            "Terça a sexta: 12h às 15h e 19h às 22h",
+            "Sábado: 12h às 22h",
+            "Domingo e segunda: fechado"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "biography": {
+          "value": "Um restaurante inteiramente fictício, com um cardápio sintético que demonstra como pratos, horários e reservas podem orientar uma página.",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "booking_url": {
+          "value": "https://booking.example/restaurant-demo",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        }
+      }
+    }
+  }
+]

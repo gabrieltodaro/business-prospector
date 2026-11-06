@@ -7,8 +7,10 @@ from .exceptions import ValidationError
 from .first_website import FirstWebsiteMarketReport
 from .models import validate_http_url
 from .normalization import slugify
+from .site_content import ReviewedBusinessContent
+from .site_strategy import WebsiteStrategy, derive_strategy
 
-SITE_STRATEGY_VERSION = "2.0"
+SITE_STRATEGY_VERSION = "3.0"
 
 
 def _optional_text(value: Any, field: str, maximum: int = 500) -> str | None:
@@ -17,28 +19,6 @@ def _optional_text(value: Any, field: str, maximum: int = 500) -> str | None:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ValidationError(f"{field} must be a non-empty string up to {maximum} characters")
     return value.strip()
-
-
-@dataclass(frozen=True, slots=True)
-class WebsiteStrategy:
-    primary_goal: str
-    primary_cta: str
-    sections: tuple[str, ...]
-    trust_strategy: str
-    contact_strategy: str
-    mobile_priorities: tuple[str, ...]
-    content_assumptions: tuple[str, ...]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "primary_goal": self.primary_goal,
-            "primary_cta": self.primary_cta,
-            "sections": list(self.sections),
-            "trust_strategy": self.trust_strategy,
-            "contact_strategy": self.contact_strategy,
-            "mobile_priorities": list(self.mobile_priorities),
-            "content_assumptions": list(self.content_assumptions),
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,14 +42,21 @@ class FirstWebsiteSiteBrief:
     market_research: FirstWebsiteMarketReport
     strategy: WebsiteStrategy
     missing_information: tuple[str, ...]
+    reviewed_content: ReviewedBusinessContent
+    source: str = "manual"
 
     @classmethod
-    def from_inputs(cls, lead: dict[str, Any], research: dict[str, Any]) -> "FirstWebsiteSiteBrief":
+    def from_inputs(
+        cls, lead: dict[str, Any], research: dict[str, Any], *,
+        reviewed_content: dict[str, Any] | None = None, image_count: int = 0,
+        allow_revision: bool = False,
+    ) -> "FirstWebsiteSiteBrief":
         if not isinstance(lead, dict):
             raise ValidationError("lead must be an object")
         if lead.get("opportunity_type") != "first_website":
             raise ValidationError("lead must be a first_website opportunity")
-        if lead.get("status") != "qualified":
+        allowed = {"qualified", "internal_website", "site_ready", "sales_preview"} if allow_revision else {"qualified"}
+        if lead.get("status") not in allowed:
             raise ValidationError("lead must have qualified status")
         name = _optional_text(lead.get("name"), "name", 200)
         category = _optional_text(lead.get("category"), "category", 200)
@@ -99,28 +86,19 @@ class FirstWebsiteSiteBrief:
             raise ValidationError("lead slug is unsafe") from exc
         if slug != safe_slug or slug in {"", ".", ".."}:
             raise ValidationError("lead slug is unsafe")
+        content = ReviewedBusinessContent.from_inputs({**lead, "slug": slug}, reviewed_content)
         missing = tuple(field for field, value in (
             ("address", address), ("phone", phone), ("confirmed_whatsapp", whatsapp if confirmed else None),
-            ("instagram", instagram), ("maps_url", maps_url), ("services_or_treatments", None),
-            ("professional_biography", None), ("opening_hours", None),
+            ("instagram", instagram), ("maps_url", maps_url), ("services_or_treatments", content.values("services") or content.values("menu") or None),
+            ("professional_biography", content.values("biography") or None), ("opening_hours", content.values("opening_hours") or None),
         ) if value is None)
-        primary_cta = "Conversar pelo WhatsApp" if confirmed else ("Entrar em contato" if phone else "Ver localização")
-        contact_strategy = "confirmed_whatsapp" if confirmed else ("public_phone" if phone else "public_location")
-        strategy = WebsiteStrategy(
-            primary_goal="Facilitar o primeiro contato com informações públicas verificadas",
-            primary_cta=primary_cta,
-            sections=("hero", "introduction", "services_placeholder", "reputation", "contact"),
-            trust_strategy="Exibir somente reputação pública e dados verificáveis",
-            contact_strategy=contact_strategy,
-            mobile_priorities=("CTA visível", "leitura rápida", "contato com poucos toques"),
-            content_assumptions=("Textos institucionais genéricos não representam credenciais clínicas"),
-        )
+        strategy = derive_strategy(lead, report, content, image_count)
         return cls(
             slug, name, category, city, address, phone, whatsapp, confirmed, instagram, maps_url,
-            float(rating), reviews, "first_website", "qualified",
+            float(rating), reviews, "first_website", lead["status"],
             _optional_text(lead.get("batch_id"), "batch_id", 100),
             _optional_text(lead.get("external_place_id"), "external_place_id", 300),
-            report, strategy, missing,
+            report, strategy, missing, content, _optional_text(lead.get("source"), "source", 100) or "manual",
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -140,4 +118,5 @@ class FirstWebsiteSiteBrief:
             "recommendations": list(self.market_research.recommendations),
             "confidence": self.market_research.confidence,
             "strategy": self.strategy.to_dict(), "missing_information": list(self.missing_information),
+            "reviewed_content": self.reviewed_content.to_dict(),
         }

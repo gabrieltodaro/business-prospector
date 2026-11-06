@@ -207,3 +207,45 @@ def validated_artifact(site_path: Path) -> PublicArtifact:
     """Return validated immutable bytes; discard the temporary validation directory."""
     with artifact_snapshot(site_path) as (artifact, _snapshot):
         return artifact
+
+
+def read_local_asset(root: Path, asset: Any) -> bytes:
+    """Reuse publication safety checks at generation's local asset boundary."""
+    relative = _relative(asset.local_file)
+    suffix = Path(relative).suffix.lower()
+    if not relative.startswith('assets/') or suffix not in _MIMES:
+        raise ValidationError('unsafe local asset path or type')
+    content = _read(root, relative, MAX_IMAGE_BYTES)
+    _validate_image(content, suffix, asset.to_dict())
+    if asset.checksum != hashlib.sha256(content).hexdigest() or asset.byte_size != len(content):
+        raise ValidationError('local asset checksum or size does not match reviewed inventory')
+    return content
+
+
+def read_local_manifest(root: Path, name: str = 'site-manifest.json') -> dict[str, Any]:
+    try:
+        result = json.loads(_read(root, name, 1024 * 1024))
+    except (ValueError, UnicodeError) as exc:
+        raise ValidationError('invalid local manifest') from exc
+    if not isinstance(result, dict):
+        raise ValidationError('local manifest must be an object')
+    return result
+
+
+@contextmanager
+def site_operation_lock(sites_root: Path, slug: str) -> Iterator[None]:
+    """Serialize revision, approval and publication for a single local draft (POSIX)."""
+    import fcntl
+    if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', slug):
+        raise ValidationError('unsafe site lock identity')
+    locks = sites_root.parent / '.site-operation-locks'
+    if locks.is_symlink():
+        raise ValidationError('site lock directory cannot be a symlink')
+    locks.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(locks / (slug + '.lock'), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)

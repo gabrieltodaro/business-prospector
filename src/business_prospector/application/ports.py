@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
+from pathlib import Path
+
+from business_prospector.domain.site_assets import SiteAsset
 
 from business_prospector.domain.models import BusinessCandidate, Lead
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
@@ -61,3 +64,7 @@ class LeadRepository(Protocol):
     def find_slug_conflict(self, slug: str) -> PersistenceConflict | None: ...
     def save_benchmark_selection(self, selection_id: str, selection: dict[str, object]) -> None: ...
     def get_benchmark_selection(self, selection_id: str) -> dict[str, object] | None: ...
+
+
+class ReviewedSiteAssetLibrary(Protocol):
+    def load(self, lead: Lead, keys: list[str]) -> tuple[tuple[SiteAsset, ...], Path]: ...

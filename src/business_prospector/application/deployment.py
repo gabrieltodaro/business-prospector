@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from business_prospector.application.artifacts import (
-    artifact_checksum, public_artifact_files, artifact_snapshot,
+    artifact_checksum, public_artifact_files, artifact_snapshot, site_operation_lock,
 )
 from business_prospector.application.ports import LeadRepository
 from business_prospector.application.site_generation import SiteDraftService
@@ -107,6 +107,15 @@ class SalesPreviewDeploymentService:
         self._provider = provider
 
     def publish(self, lead_id: int, *, explicitly_authorized: bool) -> DeploymentResult:
+        if explicitly_authorized is not True:
+            raise ValidationError("explicit publication authorization is required")
+        lead = self._repository.get(lead_id)
+        if lead is None:
+            raise ValidationError("persisted lead not found")
+        with site_operation_lock(self._drafts.sites_root, lead.slug or ""):
+            return self._publish_locked(lead_id, explicitly_authorized=explicitly_authorized)
+
+    def _publish_locked(self, lead_id: int, *, explicitly_authorized: bool) -> DeploymentResult:
         if explicitly_authorized is not True:
             raise ValidationError("explicit publication authorization is required")
         lead = self._repository.get(lead_id)

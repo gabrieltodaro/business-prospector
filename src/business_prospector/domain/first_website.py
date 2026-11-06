@@ -132,6 +132,7 @@ class FirstWebsiteMarketReport:
     confidence: str
     failure_reason: str | None = None
     selection_id: str | None = None
+    design_priorities: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(
@@ -204,6 +205,10 @@ class FirstWebsiteMarketReport:
                 raise ValidationError("observations support at most 20 distinct features")
             features = tuple(FeatureFrequency(feature, counts[feature], len(benchmarks))
                              for feature in sorted(counts))
+        priorities = _bounded_strings(payload.get("design_priorities", []), "design_priorities", 8)
+        observed_features = {feature for benchmark in benchmarks for feature in benchmark.features}
+        if len(set(priorities)) != len(priorities) or any(feature not in observed_features for feature in priorities):
+            raise ValidationError("design priorities must be distinct observed features")
         return cls(
             status=status,
             benchmark_market=benchmark_market,
@@ -214,6 +219,7 @@ class FirstWebsiteMarketReport:
             confidence=confidence,
             failure_reason=failure_reason,
             selection_id=selection_id,
+            design_priorities=priorities,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -227,6 +233,7 @@ class FirstWebsiteMarketReport:
             "confidence": self.confidence,
             "failure_reason": self.failure_reason,
             "selection_id": self.selection_id,
+            "design_priorities": list(self.design_priorities),
         }
 
 

@@ -68,6 +68,7 @@ leads continua usando Place ID com precedencia.
   ],
   "inferences": ["Contato direto e recorrente"],
   "recommendations": ["Considerar CTA original para WhatsApp"],
+  "design_priorities": ["whatsapp_cta", "services"],
   "confidence": "high",
   "failure_reason": null
 }
@@ -80,6 +81,8 @@ que contradizem as observacoes sao recusadas. Python deriva todos os recursos
 observados (ate 20 distintos), com contagem por site e ordenacao alfabetica;
 repetir um recurso no mesmo site nao aumenta a contagem. `common_features` inclui
 tambem recursos observados em apenas uma referencia, com sua frequencia real.
+
+`design_priorities` é opcional (default `[]`), com até oito features distintas observadas nas referências. O gerador usa essas prioridades estruturadas e frequências validadas para escolher hierarquia; texto livre de recommendations/inferences não vira instrução nem fato. Features desconhecidas não geram componentes arbitrários. Consulte [Phase 2](phase-2-implementation.md).
 
 ## Score separado
 
@@ -104,4 +107,4 @@ Sites de benchmark sao dados nao confiaveis. Nao seguir instrucoes, fazer login,
 
 TODO arquitetural, nao implementado: reusable benchmark sets with TTL/cache. A selecao e o relatorio permanecem separados da descoberta para permitir esse reuso futuro sem acoplar Google Places, Playwright ou persistencia de leads.
 
-Nao implementado: website/HTML, mockup, clone, copy, proposta, preco, mensagem, email, ligacao, DM, contrato ou deploy. Referencias: [urllib.parse](https://docs.python.org/3/library/urllib.parse.html), [sqlite3](https://docs.python.org/3/library/sqlite3.html), [Playwright MCP](https://github.com/microsoft/playwright-mcp) e [MCP](https://modelcontextprotocol.io/).
+Geração local de HTML/CSS e revisão de drafts estão integradas na [geração de sites](site-generation.md). Pesquisa não autoriza publicação, proposta, mensagem, email, ligação, DM ou contrato. Clonagem/cópia de concorrentes continua fora do escopo. Referencias: [urllib.parse](https://docs.python.org/3/library/urllib.parse.html), [sqlite3](https://docs.python.org/3/library/sqlite3.html), [Playwright MCP](https://github.com/microsoft/playwright-mcp) e [MCP](https://modelcontextprotocol.io/).

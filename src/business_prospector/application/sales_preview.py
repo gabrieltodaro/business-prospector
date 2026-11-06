@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from business_prospector.application.artifacts import capture_artifact, artifact_snapshot
+from business_prospector.application.artifacts import capture_artifact, artifact_snapshot, site_operation_lock
 from business_prospector.application.ports import LeadRepository
 from business_prospector.application.deployment import PreviewDeploymentProvider
 from business_prospector.application.site_generation import SiteDraftService, validate_generated_site
@@ -184,6 +184,19 @@ class SalesPreviewLifecycleService:
         lead = self._repository.get(lead_id)
         if lead is None:
             raise ValidationError("persisted lead not found")
+        with site_operation_lock(self._drafts.sites_root, lead.slug or ""):
+            return self._approve_locked(
+                lead_id, content_review_acknowledged=content_review_acknowledged,
+                asset_keys_approved_for_publish=asset_keys_approved_for_publish, approved_by=approved_by,
+            )
+
+    def _approve_locked(
+        self, lead_id: int, *, content_review_acknowledged: bool,
+        asset_keys_approved_for_publish: list[str], approved_by: str,
+    ) -> SalesPreviewApproval:
+        lead = self._repository.get(lead_id)
+        if lead is None:
+            raise ValidationError("persisted lead not found")
         if lead.status not in INTERNAL_STATUSES | {"sales_preview"}:
             raise ValidationError("lead must be in Internal Website before approval")
         if content_review_acknowledged is not True:
@@ -227,6 +240,7 @@ class SalesPreviewLifecycleService:
         preview_slug = readiness.proposed_preview_slug or propose_sales_preview_slug(
             lead.name, lead.external_place_id or lead.slug or lead.name,
         )
+        manifest["preview_kind"] = "commercial_preview"
         manifest["sales_preview"] = {
             "preview_slug": preview_slug, "preview_status": "approved_not_published",
             "preview_url": None, "approved_at": approved_at, "approved_by": approved_by,

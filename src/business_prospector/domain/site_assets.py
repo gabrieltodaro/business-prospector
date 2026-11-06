@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import re
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
@@ -85,6 +86,18 @@ class SiteAsset:
             width=width, height=height, mime_type=mime, byte_size=byte_size,
             notes=_text(payload.get("notes"), "notes", 500, required=False),
         )
+
+    @classmethod
+    def from_manifest(cls, payload: dict[str, Any]) -> "SiteAsset":
+        """Read a locally reviewed inventory; never grant rights from an observation."""
+        asset = cls.from_observation(payload)
+        asset = asset.classified(rights_status=payload.get("rights_status"), approval_status=payload.get("approval_status"))
+        local_file, checksum = payload.get("local_file"), payload.get("checksum")
+        if not isinstance(local_file, str) or not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
+            raise ValidationError("reviewed asset requires local_file and SHA-256")
+        if asset.mime_type is None or asset.byte_size is None:
+            raise ValidationError("reviewed asset requires MIME and byte size")
+        return asset.with_local_file(local_file, checksum, asset.mime_type, asset.byte_size)
 
     def classified(self, *, rights_status: str, approval_status: str) -> "SiteAsset":
         if rights_status not in RIGHTS_STATUSES or approval_status not in APPROVAL_STATUSES:

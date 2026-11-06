@@ -7,18 +7,18 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Protocol
-from urllib.parse import quote, urlsplit
+from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from business_prospector.domain.exceptions import ValidationError
 from business_prospector.domain.site_generation import FirstWebsiteSiteBrief, SITE_STRATEGY_VERSION
 from business_prospector.domain.site_assets import SiteAsset
-from business_prospector.application.ports import LeadRepository
+from business_prospector.application.ports import LeadRepository, ReviewedSiteAssetLibrary
+from business_prospector.domain.models import Lead
 
-GENERATOR_VERSION = "2.0.0"
+GENERATOR_VERSION = "3.0.0"
 REQUIRED_FILES = ("index.html", "styles.css", "site-manifest.json", "README.md")
 GENERATED_FILES = ("index.html", "styles.css", "assets/", "site-manifest.json", "README.md")
 
@@ -52,6 +52,10 @@ class SiteDraftService:
     def __init__(self, sites_root: Path) -> None:
         self._sites_root = sites_root.expanduser().resolve()
 
+    @property
+    def sites_root(self) -> Path:
+        return self._sites_root
+
     def inspect(self, slug: str) -> SiteDraftInfo:
         try:
             site = self._site_directory(slug)
@@ -70,7 +74,8 @@ class SiteDraftService:
             safe_manifest = {
                 key: raw_manifest.get(key) for key in (
                     "opportunity_type", "generated_at", "generator_version", "source_batch_id",
-                    "benchmark_market", "strategy_version", "missing_information",
+                    "benchmark_market", "strategy_version", "missing_information", "revision", "preview_kind",
+                    "strategy", "indexing_policy",
                 )
             }
             return SiteDraftInfo(True, slug, site, generated_at, "generated", safe_manifest)
@@ -111,39 +116,6 @@ class SiteDraftService:
         return site
 
 
-class CategorySitePolicy(Protocol):
-    def introduction(self, brief: FirstWebsiteSiteBrief) -> str: ...
-    def local_heading(self, brief: FirstWebsiteSiteBrief) -> str: ...
-    def local_copy(self, brief: FirstWebsiteSiteBrief) -> str: ...
-
-
-class GenericSitePolicy:
-    def introduction(self, brief: FirstWebsiteSiteBrief) -> str:
-        return f"Informações essenciais e contato direto com {brief.business_name}, em {brief.city}."
-
-    def local_heading(self, brief: FirstWebsiteSiteBrief) -> str:
-        return f"Atendimento local em {brief.city}"
-
-    def local_copy(self, brief: FirstWebsiteSiteBrief) -> str:
-        return "Consulte os canais públicos para conhecer o atendimento e tirar dúvidas."
-
-
-class DentistSitePolicy(GenericSitePolicy):
-    def introduction(self, brief: FirstWebsiteSiteBrief) -> str:
-        return f"Cuidado odontológico mais perto de você, com contato simples e informações claras."
-
-    def local_heading(self, brief: FirstWebsiteSiteBrief) -> str:
-        return f"Atendimento odontológico em {brief.city}"
-
-    def local_copy(self, brief: FirstWebsiteSiteBrief) -> str:
-        return "Entre em contato para conhecer as opções de atendimento disponíveis."
-
-
-POLICIES: dict[str, CategorySitePolicy] = {
-    "dentist": DentistSitePolicy(), "dentista": DentistSitePolicy(), "dental_clinic": DentistSitePolicy(),
-}
-
-
 @dataclass(frozen=True, slots=True)
 class SiteGenerationResult:
     ok: bool
@@ -154,6 +126,10 @@ class SiteGenerationResult:
     missing_information: tuple[str, ...]
     generation_status: str
     error: str | None = None
+    artifact_identity: dict[str, Any] | None = None
+    revision_number: int | None = None
+    previous_artifact_path: str | None = None
+    strategy: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -161,6 +137,8 @@ class SiteGenerationResult:
             "files": list(self.files), "warnings": list(self.warnings),
             "missing_information": list(self.missing_information),
             "generation_status": self.generation_status, "error": self.error,
+            "artifact_identity": self.artifact_identity, "revision_number": self.revision_number,
+            "previous_artifact_path": self.previous_artifact_path, "strategy": self.strategy,
         }
 
 
@@ -169,6 +147,7 @@ class _SiteHTMLValidator(HTMLParser):
         super().__init__()
         self.tags: set[str] = set()
         self.errors: list[str] = []
+        self.local_images: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.tags.add(tag)
@@ -190,6 +169,7 @@ class _SiteHTMLValidator(HTMLParser):
                 self.errors.append("target=_blank requires noopener noreferrer")
         if tag == "img":
             src = values.get("src") or ""
+            self.local_images.append(src)
             if urlsplit(src).scheme or src.startswith("//"):
                 self.errors.append("generated images must be local")
             if "alt" not in values:
@@ -210,6 +190,13 @@ def validate_generated_site(site_dir: Path, competitor_domains: tuple[str, ...] 
         raise ValidationError("generated HTML is missing semantic structure")
     if parser.errors:
         raise ValidationError(parser.errors[0])
+    for relative in parser.local_images:
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts or not relative.startswith("assets/"):
+            raise ValidationError("unsafe generated image path")
+        asset = site_dir / path
+        if asset.is_symlink() or not asset.is_file():
+            raise ValidationError("generated image is missing or unsafe")
     lowered = html.lower()
     if any(domain and domain.lower() in lowered for domain in competitor_domains):
         raise ValidationError("competitor domain leaked into generated output")
@@ -221,175 +208,235 @@ class SiteGenerationService:
     def __init__(self, sites_root: Path) -> None:
         self._sites_root = sites_root.expanduser().resolve()
 
+    @property
+    def sites_root(self) -> Path:
+        return self._sites_root
+
     def generate(
         self, lead: dict[str, Any], research: dict[str, Any], *, overwrite: bool = False,
-        assets: tuple[SiteAsset, ...] = (), asset_source_root: Path | None = None,
+        assets: tuple[SiteAsset, ...] | None = None, asset_source_root: Path | None = None,
+        reviewed_content: dict[str, Any] | None = None,
+        after_install: Callable[[], None] | None = None,
     ) -> SiteGenerationResult:
-        brief = FirstWebsiteSiteBrief.from_inputs(lead, research)
-        destination = (self._sites_root / brief.lead_slug).resolve()
-        if destination.parent != self._sites_root:
-            raise ValidationError("unsafe generated site destination")
-        if destination.exists() and not overwrite:
-            return SiteGenerationResult(
-                False, brief.lead_slug, str(destination), (), (), brief.missing_information,
-                "conflict", "site directory already exists",
-            )
+        from .artifacts import site_operation_lock
+        initial = FirstWebsiteSiteBrief.from_inputs(lead, research, allow_revision=overwrite)
+        with site_operation_lock(self._sites_root, initial.lead_slug):
+            return self._generate_locked(lead, research, initial, overwrite, assets, asset_source_root,
+                                         reviewed_content, after_install)
+
+    def _generate_locked(
+        self, lead: dict[str, Any], research: dict[str, Any], initial: FirstWebsiteSiteBrief,
+        overwrite: bool, assets: tuple[SiteAsset, ...] | None, asset_source_root: Path | None,
+        reviewed_content: dict[str, Any] | None, after_install: Callable[[], None] | None,
+    ) -> SiteGenerationResult:
+        from .artifacts import read_local_manifest, capture_artifact
+        from .draft_revision import install_validated_draft
+        destination = self._sites_root / initial.lead_slug
+        if destination.is_symlink():
+            raise ValidationError('draft destination cannot be a symlink')
+        existing = None
+        if destination.exists():
+            if not overwrite:
+                return SiteGenerationResult(False, initial.lead_slug, str(destination), (), (), initial.missing_information,
+                                            'conflict', 'site directory already exists')
+            existing = read_local_manifest(destination)
+            identity = existing.get('lead_identity')
+            if identity != {'slug': initial.lead_slug, 'external_place_id': initial.external_place_id}:
+                raise ValidationError('replacement must preserve business identity')
+            for key, status in (('deployment', 'deployment_status'), ('sales_preview', 'preview_status')):
+                metadata = existing.get(key)
+                if metadata is not None and not isinstance(metadata, dict):
+                    raise ValidationError('invalid existing publication metadata')
+                if metadata and metadata.get(status) == 'published':
+                    raise ValidationError('published previews cannot be replaced')
+            if reviewed_content is None:
+                reviewed_content = existing.get('reviewed_content')
+            if assets is None:
+                raw_assets = existing.get('assets')
+                if not isinstance(raw_assets, list) or len(raw_assets) > 30:
+                    raise ValidationError('invalid existing asset inventory')
+                assets = tuple(SiteAsset.from_manifest(item) for item in raw_assets)
+                asset_source_root = destination
+        assets = assets or ()
+        if len(assets) > 30 or len({asset.key for asset in assets}) != len(assets):
+            raise ValidationError('draft supports up to 30 distinct assets')
+        image_count = sum(asset.approval_status in {'approved_for_draft', 'approved_for_publish'}
+                          and asset.asset_type != 'logo' for asset in assets)
+        brief = FirstWebsiteSiteBrief.from_inputs(lead, research, reviewed_content=reviewed_content,
+                                                  image_count=image_count, allow_revision=overwrite)
         self._sites_root.mkdir(parents=True, exist_ok=True)
-        temp = Path(tempfile.mkdtemp(prefix=f".{brief.lead_slug}-", dir=self._sites_root))
+        temp = Path(tempfile.mkdtemp(prefix=f'.{brief.lead_slug}-', dir=self._sites_root))
         try:
-            rendered_assets = self._write_site(temp, brief, assets, asset_source_root)
-            domains = tuple(urlsplit(item.website_url).hostname or "" for item in brief.market_research.benchmarks)
+            self._write_site(temp, brief, assets, asset_source_root)
+            domains = tuple(urlsplit(item.website_url).hostname or '' for item in brief.market_research.benchmarks)
             validate_generated_site(temp, domains)
-            if destination.exists():
-                shutil.rmtree(destination)
-            temp.replace(destination)
-        except Exception:
-            shutil.rmtree(temp, ignore_errors=True)
-            raise
-        warnings = tuple(f"Informação pendente: {item}" for item in brief.missing_information)
-        return SiteGenerationResult(
-            True, brief.lead_slug, str(destination), GENERATED_FILES, warnings,
-            brief.missing_information, "regenerated" if overwrite else "generated",
-        )
+            identity = capture_artifact(temp).identity()
+            manifest = read_local_manifest(temp)
+            previous_revision = existing.get('revision', {}) if existing else {}
+            if not isinstance(previous_revision, dict):
+                raise ValidationError('invalid revision metadata')
+            number = previous_revision.get('number', 0)
+            if type(number) is not int or number < 0:
+                raise ValidationError('invalid revision number')
+            previous_identity = previous_revision.get('artifact_identity', {})
+            if not isinstance(previous_identity, dict):
+                raise ValidationError('invalid previous artifact identity')
+            manifest['revision'] = {'number': number + 1, 'artifact_identity': identity,
+                                    'previous_revision_id': previous_identity.get('checksum')}
+            (temp / 'site-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            # Validation is complete before either the old directory or database state moves.
+            with install_validated_draft(temp, destination) as previous:
+                if after_install:
+                    after_install()
+                result = SiteGenerationResult(
+                    True, brief.lead_slug, str(destination), GENERATED_FILES,
+                    tuple(f'Informação pendente: {item}' for item in brief.missing_information),
+                    brief.missing_information, 'regenerated' if overwrite else 'generated',
+                    artifact_identity=identity, revision_number=number + 1,
+                    previous_artifact_path=str(previous) if previous else None, strategy=brief.strategy.to_dict(),
+                )
+        finally:
+            if temp.exists():
+                shutil.rmtree(temp)
+        return result
 
     def _write_site(
         self, directory: Path, brief: FirstWebsiteSiteBrief, assets: tuple[SiteAsset, ...],
         asset_source_root: Path | None,
     ) -> tuple[SiteAsset, ...]:
-        assets_dir = directory / "assets"
+        from .artifacts import read_local_asset
+        from .site_renderer import render_html, render_css
+        from business_prospector.domain.website_content_model import WebsiteContentModel
+        assets_dir = directory / 'assets'
         assets_dir.mkdir()
         rendered_assets: list[SiteAsset] = []
-        source_root = asset_source_root.expanduser().resolve() if asset_source_root else None
         for asset in assets:
-            if asset.approval_status != "approved_for_draft" or not asset.local_file or source_root is None:
+            if asset.approval_status not in {'approved_for_draft', 'approved_for_publish'}:
                 continue
-            source = (source_root / asset.local_file).resolve()
-            try:
-                source.relative_to(source_root)
-            except ValueError as exc:
-                raise ValidationError("asset source escapes the controlled root") from exc
-            if not source.is_file():
-                raise ValidationError("approved asset file is missing")
-            destination = assets_dir / source.name
-            shutil.copyfile(source, destination)
-            rendered_assets.append(asset.with_local_file(
-                f"assets/{destination.name}", asset.checksum or "", asset.mime_type or "", asset.byte_size or source.stat().st_size,
-            ))
-        if not rendered_assets:
-            fallback = assets_dir / "hero-visual.svg"
-            fallback.write_text(_HERO_SVG, encoding="utf-8")
-            fallback_bytes = fallback.read_bytes()
+            if asset_source_root is None:
+                raise ValidationError('approved local assets require a controlled source root')
+            asset = SiteAsset.from_manifest(asset.to_dict())
+            if asset.rights_status in {'unknown', 'do_not_use'} or asset.source_type in {'business_social_reference', 'unknown', 'placeholder'}:
+                raise ValidationError('asset rights or provenance do not permit draft use')
+            if asset.source_type == 'existing_business_site' and not asset.business_identity_match:
+                raise ValidationError('asset business identity mismatch')
+            content = read_local_asset(asset_source_root, asset)
+            # Controlled keys avoid basename collisions; no caller path becomes a destination.
+            name = asset.key + Path(asset.local_file or '').suffix.lower()
+            (assets_dir / name).write_bytes(content)
+            rendered_assets.append(asset.with_local_file(f'assets/{name}', asset.checksum or '', asset.mime_type or '', len(content)))
+        if not any(asset.asset_type != 'logo' for asset in rendered_assets):
+            if any(asset.key == 'hero-visual' for asset in rendered_assets):
+                raise ValidationError('hero-visual is reserved for the decorative fallback')
+            fallback = _HERO_SVG
+            swatches = {
+                'terracotta': {'#d8ece5': '#ead5c3', '#f1dfc5': '#f2e6d1', '#2f7869': '#974125'},
+                'slate': {'#d8ece5': '#d3e2eb', '#f1dfc5': '#e2e8ec', '#2f7869': '#315b73'},
+            }
+            for original, tint in swatches.get(brief.strategy.palette, {}).items():
+                fallback = fallback.replace(original, tint)
+            fallback_bytes = fallback.encode('utf-8')
+            (assets_dir / 'hero-visual.svg').write_bytes(fallback_bytes)
             rendered_assets.append(SiteAsset(
-                key="hero-visual", asset_type="illustration", source_type="generated",
+                key='hero-visual', asset_type='illustration', source_type='generated',
                 source_url=None, discovered_from=None, business_identity_match=True,
-                rights_status="generated", approval_status="approved_for_publish", alt_text="",
-                width=1200, height=900, mime_type="image/svg+xml", byte_size=len(fallback_bytes),
-                local_file="assets/hero-visual.svg", checksum=hashlib.sha256(fallback_bytes).hexdigest(),
-                notes="Authored decorative fallback; replace only with an approved business asset.",
+                rights_status='generated', approval_status='approved_for_publish', alt_text='',
+                width=1200, height=900, mime_type='image/svg+xml', byte_size=len(fallback_bytes),
+                local_file='assets/hero-visual.svg', checksum=hashlib.sha256(fallback_bytes).hexdigest(),
+                notes='Authored decorative fallback; not a photograph of the business.',
             ))
-        policy = POLICIES.get(brief.category.casefold(), GenericSitePolicy())
-        (directory / "index.html").write_text(self._html(brief, policy, tuple(rendered_assets)), encoding="utf-8")
-        (directory / "styles.css").write_text(_CSS, encoding="utf-8")
-        files = list(GENERATED_FILES)
+        model = WebsiteContentModel.from_brief(brief)
+        (directory / 'index.html').write_text(render_html(brief, tuple(rendered_assets), model), encoding='utf-8')
+        (directory / 'styles.css').write_text(render_css(), encoding='utf-8')
         manifest = {
-            "lead_identity": {"slug": brief.lead_slug, "external_place_id": brief.external_place_id},
-            "opportunity_type": brief.opportunity_type,
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "generator_version": GENERATOR_VERSION, "source_batch_id": brief.batch_id,
-            "benchmark_market": brief.market_research.benchmark_market,
-            "strategy_version": SITE_STRATEGY_VERSION,
-            "missing_information": list(brief.missing_information), "generated_files": files,
-            "assets": [asset.to_dict() for asset in rendered_assets],
+            'lead_identity': {'slug': brief.lead_slug, 'external_place_id': brief.external_place_id},
+            'opportunity_type': brief.opportunity_type,
+            'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'generator_version': GENERATOR_VERSION, 'source_batch_id': brief.batch_id,
+            'benchmark_market': brief.market_research.benchmark_market,
+            'strategy_version': SITE_STRATEGY_VERSION, 'strategy': brief.strategy.to_dict(),
+            'reviewed_content': brief.reviewed_content.to_dict(), 'content_model': model.to_dict(),
+            'preview_kind': 'internal_draft', 'indexing_policy': 'noindex,nofollow,noarchive',
+            'missing_information': list(brief.missing_information), 'generated_files': list(GENERATED_FILES),
+            'assets': [asset.to_dict() for asset in rendered_assets],
         }
-        (directory / "site-manifest.json").write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
-        )
-        (directory / "README.md").write_text(
-            "# Rascunho local\n\nSite demonstrativo para revisão interna. Não publicado e não aprovado pelo cliente.\n\n"
-            "Informações ausentes e proveniência dos assets estão em `site-manifest.json`. "
-            "Aprovação para draft não representa aprovação para publicação.\n",
-            encoding="utf-8",
+        (directory / 'site-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        (directory / 'README.md').write_text(
+            '# Rascunho local\n\nDemonstração independente para revisão interna. Não é o site oficial.\n\n'
+            'Estratégia, fontes de fatos, informações ausentes e proveniência dos assets estão no manifesto privado. '
+            'Aprovação de draft não autoriza publicação.\n', encoding='utf-8',
         )
         return tuple(rendered_assets)
 
-    @staticmethod
-    def _html(
-        brief: FirstWebsiteSiteBrief, policy: CategorySitePolicy, assets: tuple[SiteAsset, ...],
-    ) -> str:
-        name, city = escape(brief.business_name), escape(brief.city)
-        description = escape(f"Conheça {brief.business_name} em {brief.city} e consulte os canais públicos de contato.")
-        contact_links: list[str] = []
-        if brief.whatsapp_confirmed and brief.whatsapp:
-            digits = "".join(char for char in brief.whatsapp if char.isdigit())
-            contact_links.append(f'<a class="button" href="https://wa.me/{digits}" target="_blank" rel="noopener noreferrer">Conversar pelo WhatsApp</a>')
-        elif brief.phone:
-            contact_links.append(f'<a class="button" href="tel:{quote(brief.phone, safe="+")}">Ligar para contato público</a>')
-        if brief.maps_url:
-            contact_links.append(f'<a class="button button--quiet" href="{escape(brief.maps_url, quote=True)}" target="_blank" rel="noopener noreferrer">Ver no mapa</a>')
-        if brief.instagram:
-            contact_links.append(f'<a class="text-link" href="{escape(brief.instagram, quote=True)}" target="_blank" rel="noopener noreferrer">Instagram público</a>')
-        address = f'<p>{escape(brief.address)}</p>' if brief.address else f'<p>{city}</p>'
-        contacts = "\n".join(contact_links) or '<a class="button" href="#contato">Ver contato</a>'
-        hero = assets[0]
-        dimensions = (
-            f' width="{hero.width}" height="{hero.height}"' if hero.width and hero.height else ""
-        )
-        hero_image = f'<img src="{escape(hero.local_file or "", quote=True)}" alt="{escape(hero.alt_text or "", quote=True)}"{dimensions} fetchpriority="high">'
-        gallery_items = "".join(
-            f'<figure><img src="{escape(asset.local_file or "", quote=True)}" alt="{escape(asset.alt_text or "", quote=True)}"'
-            f'{f" width={asset.width} height={asset.height}" if asset.width and asset.height else ""} loading="lazy"></figure>'
-            for asset in assets[1:]
-        )
-        gallery = f'<section class="gallery" aria-label="Imagens do negócio">{gallery_items}</section>' if gallery_items else ""
-        return f'''<!doctype html>
-<html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name} | {city}</title><meta name="description" content="{description}">
-<meta property="og:title" content="{name}"><meta property="og:description" content="{description}">
-<link rel="stylesheet" href="styles.css"></head>
-<body><header class="site-header"><a class="brand" href="#inicio">{name}</a><nav aria-label="Navegação principal"><a href="#sobre">Sobre</a><a href="#contato">Contato</a></nav></header>
-<main id="inicio"><section class="hero"><div class="hero-copy"><p class="eyebrow">{city}</p><h1>{name}</h1><p class="lede">{escape(policy.introduction(brief))}</p><div class="actions">{contacts}</div></div><div class="hero-media">{hero_image}<span class="hero-mark" aria-hidden="true">✦</span></div></section>
-<section class="trust-bar" aria-label="Reputação pública"><p><strong>{brief.rating:.1f}</strong> no Google</p><span aria-hidden="true"></span><p><strong>{brief.review_count}</strong> avaliações</p><span aria-hidden="true"></span><p><strong>{city}</strong></p></section>
-<section id="sobre" class="intro section-grid"><p class="eyebrow">Perto de você</p><div><h2>{escape(policy.local_heading(brief))}</h2><p>{escape(policy.local_copy(brief))}</p></div></section>
-{gallery}
-<section class="reputation section-grid"><p class="eyebrow">Confiança pública</p><div><p class="rating-line"><strong>{brief.rating:.1f}</strong><span>de 5</span></p><h2>{brief.review_count} avaliações públicas</h2><p>Reputação pública consultada para facilitar sua escolha.</p></div></section>
-<section id="contato" class="contact section-grid"><p class="eyebrow">Contato e localização</p><div><h2>Fale com {name}</h2>{address}<div class="actions">{contacts}</div></div></section>
-<section class="closing"><p class="eyebrow">{city}</p><h2>Seu próximo contato pode começar aqui.</h2><div class="actions">{contacts}</div></section></main>
-<footer><p class="footer-brand">{name}</p><p>{city}</p></footer></body></html>'''
-
 
 class PersistedSiteGenerationWorkflow:
-    """Coordinates artifact generation and the post-validation pipeline transition."""
+    """Use authoritative lead/research and commit status inside recoverable artifact installation."""
 
-    def __init__(self, repository: LeadRepository, generator: SiteGenerationService) -> None:
+    def __init__(self, repository: LeadRepository, generator: SiteGenerationService, asset_library: ReviewedSiteAssetLibrary | None = None) -> None:
         self._repository = repository
         self._generator = generator
+        self._asset_library = asset_library
 
     def generate(
         self, lead_id: int, research: dict[str, Any], *, overwrite: bool = False,
-    ) -> tuple[SiteGenerationResult, Any | None]:
-        if isinstance(lead_id, bool) or not isinstance(lead_id, int) or lead_id < 1:
-            raise ValidationError("persisted lead id is required")
+        reviewed_content: dict[str, Any] | None = None, asset_keys: list[str] | None = None,
+    ) -> tuple[SiteGenerationResult, Lead | None]:
+        return self._run(lead_id, research, overwrite=overwrite, revision=False,
+                         reviewed_content=reviewed_content, asset_keys=asset_keys)
+
+    def revise(
+        self, lead_id: int, *, reviewed_content: dict[str, Any] | None = None,
+        asset_keys: list[str] | None = None,
+    ) -> tuple[SiteGenerationResult, Lead | None]:
+        return self._run(lead_id, None, overwrite=True, revision=True,
+                         reviewed_content=reviewed_content, asset_keys=asset_keys)
+
+    def _run(
+        self, lead_id: int, research: dict[str, Any] | None, *, overwrite: bool, revision: bool,
+        reviewed_content: dict[str, Any] | None, asset_keys: list[str] | None,
+    ) -> tuple[SiteGenerationResult, Lead | None]:
+        from business_prospector.domain.first_website import FirstWebsiteMarketReport
+        if type(lead_id) is not int or lead_id < 1:
+            raise ValidationError('persisted lead id is required')
         lead = self._repository.get(lead_id)
         if lead is None:
-            raise ValidationError("persisted lead not found")
-        if lead.status != "qualified":
-            raise ValidationError("persisted lead must have qualified status")
-        from business_prospector.domain.first_website import FirstWebsiteMarketReport
-        supplied = FirstWebsiteMarketReport.from_dict(research).to_dict()
+            raise ValidationError('persisted lead not found')
+        allowed = {'internal_website', 'site_ready', 'sales_preview'} if revision else {'qualified'}
+        if lead.status not in allowed:
+            raise ValidationError('persisted lead must be an internal draft or unpublished preview' if revision else 'persisted lead must have qualified status')
+        if lead.opportunity_type != 'first_website':
+            raise ValidationError('only first_website generation is supported; redesign remains unsupported')
+        if revision and not SiteDraftService(self._generator.sites_root).inspect(lead.slug or '').exists:
+            raise ValidationError('revision requires an existing valid internal draft')
         stored = FirstWebsiteMarketReport.from_dict(lead.market_research).to_dict()
+        supplied = stored if research is None else FirstWebsiteMarketReport.from_dict(research).to_dict()
         if supplied != stored:
-            raise ValidationError("generation research must match the persisted lead research")
-        result = self._generator.generate(lead.to_dict(), supplied, overwrite=overwrite)
-        if not result.ok:
-            return result, None
-        updated = self._repository.update(lead_id, {"status": "internal_website"})
+            raise ValidationError('generation research must match the persisted lead research')
+        assets, source_root = None, None
+        if asset_keys is not None:
+            if not isinstance(asset_keys, list):
+                raise ValidationError('asset_keys must be a list')
+            if asset_keys:
+                if self._asset_library is None:
+                    raise ValidationError('reviewed local asset library is unavailable')
+                assets, source_root = self._asset_library.load(lead, asset_keys)
+            else:
+                assets = ()
+        updated = None
+        def commit_status():
+            nonlocal updated
+            # Reject a concurrently changed lead instead of overwriting a later lifecycle decision.
+            current = self._repository.get(lead_id)
+            if current is None or current.to_dict() != lead.to_dict():
+                raise ValidationError('lead changed during generation; retry with current data')
+            updated = self._repository.update(lead_id, {'status': 'internal_website'})
+        result = self._generator.generate(
+            lead.to_dict(), supplied, overwrite=overwrite, reviewed_content=reviewed_content,
+            assets=assets, asset_source_root=source_root, after_install=commit_status,
+        )
         return result, updated
 
 
 _HERO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" role="img">
 <defs><linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d8ece5"/><stop offset="1" stop-color="#f1dfc5"/></linearGradient><filter id="b"><feGaussianBlur stdDeviation="28"/></filter></defs>
 <rect width="1200" height="900" fill="url(#a)"/><circle cx="930" cy="210" r="245" fill="#fff" opacity=".58"/><circle cx="250" cy="720" r="310" fill="#2f7869" opacity=".18" filter="url(#b)"/><path d="M170 535c185-250 369-276 552-79 110 118 219 131 327 39v276H170z" fill="#fff" opacity=".72"/><path d="M650 166c76 65 116 155 120 269-102-49-204-47-307 5 18-123 80-214 187-274z" fill="#2f7869" opacity=".72"/></svg>"""
-
-_CSS = """\
-:root{--ink:#17302b;--muted:#5e6d68;--paper:#f4f2eb;--surface:#fff;--sage:#2f7869;--sage-dark:#1d5b50;--sand:#e9d8bd;--line:#d8ded8;--s1:.5rem;--s2:1rem;--s3:1.5rem;--s4:2.5rem;--s5:4rem;--s6:6rem;--r1:.75rem;--r2:1.5rem;--shadow:0 1.5rem 4rem #17302b18;--content:72rem;--narrow:42rem;font-family:Inter,Avenir,ui-sans-serif,system-ui,sans-serif;color:var(--ink);background:var(--paper)}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;line-height:1.55}img{display:block;max-width:100%;height:auto}a{color:inherit}a:focus-visible{outline:3px solid #c87c42;outline-offset:4px}.site-header{position:sticky;top:0;z-index:10;min-height:4.5rem;padding:var(--s2) max(var(--s2),calc((100vw - var(--content))/2));display:flex;align-items:center;justify-content:space-between;gap:var(--s2);background:#f4f2ebed;backdrop-filter:blur(14px);border-bottom:1px solid #ffffff8c}.brand{max-width:34rem;font-family:Georgia,serif;font-weight:700;line-height:1.1;text-decoration:none}.site-header nav{display:flex;gap:var(--s3);font-size:.9rem;font-weight:700}.site-header nav a{text-decoration:none}.site-header nav a:hover{color:var(--sage)}.hero{min-height:calc(100svh - 4.5rem);display:grid;align-items:center;gap:var(--s4);padding:var(--s4) max(var(--s2),calc((100vw - var(--content))/2)) var(--s5);overflow:hidden}.hero-copy{max-width:38rem;animation:rise .7s both}.eyebrow{margin:0 0 var(--s2);color:var(--sage);font-size:.72rem;font-weight:900;letter-spacing:.15em;text-transform:uppercase}.hero h1{margin:0;font-family:Georgia,serif;font-size:clamp(2.65rem,8vw,5.65rem);font-weight:500;letter-spacing:-.045em;line-height:.98}.lede{max-width:34rem;margin:var(--s3) 0 0;color:var(--muted);font-size:clamp(1.05rem,2vw,1.3rem)}.hero-media{position:relative;min-height:24rem;overflow:hidden;border-radius:var(--r2);box-shadow:var(--shadow);animation:reveal .85s .12s both}.hero-media img{width:100%;height:100%;min-height:24rem;object-fit:cover;transition:transform .7s ease}.hero-media:hover img{transform:scale(1.025)}.hero-mark{position:absolute;right:var(--s3);bottom:var(--s3);width:3.5rem;height:3.5rem;display:grid;place-items:center;border-radius:50%;background:#fff;color:var(--sage);font-size:1.5rem;box-shadow:0 .5rem 2rem #17302b22}.actions{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;margin-top:var(--s3)}.button{display:inline-flex;min-height:3rem;align-items:center;justify-content:center;padding:.75rem 1.2rem;border:1px solid var(--sage);border-radius:999px;background:var(--sage);color:#fff;font-weight:800;text-decoration:none;transition:transform .18s,background .18s}.button:hover{transform:translateY(-2px);background:var(--sage-dark)}.button--quiet{background:transparent;color:var(--ink);border-color:#8b9994}.text-link{font-weight:800;text-underline-offset:.25rem}.trust-bar{max-width:var(--content);margin:0 auto;padding:var(--s3) var(--s2);display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:var(--s2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.trust-bar p{margin:0;color:var(--muted)}.trust-bar strong{color:var(--ink)}.trust-bar span{width:4px;height:4px;border-radius:50%;background:var(--sage)}.section-grid{max-width:var(--content);margin:auto;padding:var(--s6) var(--s2);display:grid;gap:var(--s3);border-bottom:1px solid var(--line)}.section-grid h2,.closing h2{max-width:18ch;margin:0 0 var(--s2);font-family:Georgia,serif;font-size:clamp(2rem,5vw,3.8rem);font-weight:500;line-height:1.05;letter-spacing:-.035em}.section-grid>div>p{max-width:var(--narrow);color:var(--muted);font-size:1.08rem}.reputation{background:var(--ink);color:#fff;max-width:none;padding-inline:max(var(--s2),calc((100vw - var(--content))/2))}.reputation .eyebrow,.reputation div>p{color:#b8d8cf}.rating-line{display:flex;align-items:baseline;gap:.75rem;margin:0!important}.rating-line strong{font:500 clamp(4.5rem,13vw,9rem)/.8 Georgia,serif;color:#fff}.rating-line span{font-size:1.15rem}.gallery{max-width:var(--content);margin:auto;padding:var(--s2);display:grid;gap:var(--s2)}.gallery figure{margin:0;overflow:hidden;border-radius:var(--r2)}.gallery img{width:100%;aspect-ratio:4/3;object-fit:cover}.contact{background:var(--surface)}.closing{max-width:var(--content);margin:auto;padding:var(--s6) var(--s2);text-align:center}.closing h2{margin-inline:auto}.closing .actions{justify-content:center}footer{max-width:var(--content);margin:auto;padding:var(--s4) var(--s2);display:flex;justify-content:space-between;gap:var(--s2);border-top:1px solid var(--line);color:var(--muted)}footer p{margin:0}.footer-brand{font-family:Georgia,serif;color:var(--ink);font-weight:700}@media(min-width:48rem){.hero{grid-template-columns:minmax(0,1fr) minmax(22rem,.82fr)}.hero-media{height:min(68vh,42rem)}.section-grid{grid-template-columns:12rem 1fr}.gallery{grid-template-columns:repeat(2,1fr)}.gallery figure:first-child:last-child{grid-column:1/-1}.site-header{padding-block:var(--s3)}}@media(max-width:38rem){.site-header nav a:first-child{display:none}.hero{padding-top:var(--s3);min-height:auto}.hero h1{font-size:clamp(2.5rem,13vw,4rem)}.hero-media{min-height:20rem}.hero-media img{min-height:20rem}.trust-bar{justify-content:flex-start}.trust-bar span{display:none}.trust-bar p{flex:1 0 40%}.section-grid,.closing{padding-block:var(--s5)}footer{flex-direction:column}}@keyframes rise{from{opacity:0;transform:translateY(1.25rem)}to{opacity:1;transform:none}}@keyframes reveal{from{opacity:0;transform:translateY(1.5rem) scale(.98)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}}\n"""

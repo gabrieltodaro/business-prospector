@@ -21,6 +21,7 @@ business_prospector = [
     "dashboard_static/*.css",
     "dashboard_static/*.js",
     "resources/*.json",
+    "resources/*.css",
 ]
 
 [tool.pytest.ini_options]

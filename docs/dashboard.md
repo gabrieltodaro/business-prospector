@@ -185,3 +185,7 @@ essa variavel, usam `~/.openclaw/data/business-prospector/business-prospector.db
 `--database` continua tendo precedencia no dashboard. Ambos carregam a mesma
 policy de `BUSINESS_PROSPECTOR_CONFIG` e delegam transicoes a `LeadStatusService`.
 Nenhum banco e movido entre os caminhos automaticamente.
+
+## Revisões personalizadas (Phase 2)
+
+O MCP `revise_first_website_draft` revisa drafts existentes sem voltar à qualificação. A revisão bem-sucedida retorna a Internal Website e exige nova aprovação comercial; preview publicado não pode ser substituído. O dashboard continua usando as mesmas rotas de preview/readiness/aprovação, e o payload de `site_draft` inclui estratégia, número/identidade da revisão e `preview_kind`. Não foi adicionado editor ou CMS. Consulte [contratos e compatibilidade](phase-2-implementation.md).

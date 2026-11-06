@@ -4,7 +4,7 @@ O gerador cria um rascunho estático para revisão interna a partir de um lead `
 
 ## Arquitetura e entradas
 
-`FirstWebsiteSiteBrief` mantém fatos do alvo, resumo estruturado da pesquisa, estratégia, hipóteses e informações ausentes. `SiteGenerationService` escolhe uma policy de categoria e renderiza arquivos controlados. A policy de dentistas só adapta linguagem genérica e placeholders; novas categorias podem registrar outra policy sem alterar o renderizador.
+`FirstWebsiteSiteBrief` mantém fatos do alvo, pesquisa validada, conteúdo revisado, estratégia e informações ausentes. A versão 3 transforma observações e prioridades respaldadas por evidências em estratégia determinística, modelo de conteúdo e componentes HTML/CSS. Policies pequenas para dentistas, restaurantes e categoria genérica escolhem seções e hierarquia sem inventar fatos. Consulte o [relatório de Phase 2](phase-2-implementation.md) para contratos, exemplos, testes e compatibilidade.
 
 São obrigatórios:
 
@@ -13,7 +13,7 @@ São obrigatórios:
 - pesquisa `complete`, com pelo menos dois benchmarks válidos;
 - dados públicos opcionais de endereço, telefone, WhatsApp confirmado, Instagram e mapa.
 
-Informação ausente permanece em `missing_information` e aparece como pendência. O gerador não inventa biografia, credenciais, tratamentos, horários, preços, depoimentos ou alegações clínicas. WhatsApp só vira CTA quando número e confirmação estão presentes.
+Informação ausente permanece em `missing_information` e aparece como pendência interna. `reviewed_content` opcional exige identidade do alvo, revisor, timestamp e fontes para cada fato; pesquisa de concorrentes não comprova fatos do negócio. O gerador não inventa biografia, credenciais, tratamentos, horários, preços, depoimentos ou alegações clínicas. WhatsApp só vira CTA quando número e confirmação estão presentes.
 
 ## Originalidade e segurança
 
@@ -21,7 +21,7 @@ Os benchmarks informam padrões de mercado, mas seus textos, HTML, domínios, im
 
 ## Qualidade visual e assets
 
-A estratégia visual 2.0 usa hero orientado por imagem, prova pública, ritmo editorial, seções sem caixas repetitivas, CTA final e grids responsivos. Na ausência de fotografia aprovada, uma ilustração decorativa local e authored mantém o draft visualmente completo; pendências ficam no README, manifesto e warnings, não em grandes placeholders visíveis.
+A estratégia visual 3.0 compõe serviços/cardápio, biografia, equipe/credenciais, horários, FAQ, galeria, reputação, localização e contato somente quando justificados por fatos e pesquisa. Três paletas originais, duas composições de hero e tipografia local tornam a escolha visual determinística e explicável. Na ausência de fotografia aprovada, uma ilustração decorativa local e authored mantém o draft visualmente completo; pendências ficam no README, manifesto e warnings, não em grandes placeholders visíveis.
 
 `SiteAsset` separa três decisões:
 
@@ -37,7 +37,7 @@ Imagens de Instagram, Facebook, TikTok e outras redes são apenas referências: 
 
 Assets aceitos são copiados para o site; o HTML nunca hotlinka imagens. `<img>` usa `alt`, dimensões quando conhecidas, `object-fit`, `fetchpriority` no hero e `loading="lazy"` abaixo da dobra. Alt desconhecido permanece vazio em vez de descrever conteúdo não identificado. Consulte [pathlib](https://docs.python.org/3/library/pathlib.html), [urllib.request](https://docs.python.org/3/library/urllib.request.html), [urllib.parse](https://docs.python.org/3/library/urllib.parse.html), [mimetypes](https://docs.python.org/3/library/mimetypes.html), [MDN img](https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/img), [MDN picture](https://developer.mozilla.org/docs/Web/HTML/Reference/Elements/picture) e [WCAG](https://www.w3.org/WAI/standards-guidelines/wcag/).
 
-O diretório é sempre `<sites_root>/<lead_slug>`. Slugs com travessia são recusados. A geração usa diretório temporário e troca atômica; um site existente gera conflito, a menos que `overwrite=true` seja solicitado explicitamente. O MCP controla `sites_root` como `<BUSINESS_PROSPECTOR_DATA_DIR>/sites`, sem aceitar destino enviado pelo agente.
+O diretório é sempre `<sites_root>/<lead_slug>`. Slugs com travessia são recusados. A geração valida primeiro um diretório temporário; um site existente gera conflito, a menos que a revisão seja explícita. A revisão arquiva o artefato anterior fora da raiz pública e restaura-o em falhas capturadas de instalação/persistência. Não há transação única entre filesystem e SQLite: interrupções abruptas podem exigir reconciliação manual. Artefatos publicados não podem ser substituídos. O MCP controla `sites_root` como `<BUSINESS_PROSPECTOR_DATA_DIR>/sites`, sem aceitar destino enviado pelo agente.
 
 Estrutura:
 
@@ -50,7 +50,7 @@ sites/<lead-slug>/
   README.md
 ```
 
-O manifesto contém identidade mínima, batch de origem, mercado benchmark, versões, arquivos e pendências. Não contém pesquisa integral nem segredos.
+O manifesto privado contém identidade, batch, mercado benchmark, versões, estratégia e suas evidências, fatos revisados, modelo de conteúdo, proveniência de assets, identidade de revisão e pendências. Não contém pesquisa integral nem deve receber segredos. Apenas HTML, CSS e assets do inventário permitido são publicáveis.
 
 ## Demo e preview
 
@@ -68,7 +68,11 @@ python -m business_prospector.site_preview clinica-sorriso-exemplo-catanduva-sp 
 
 Abra `http://127.0.0.1:8765`. O servidor não expõe config, banco ou repositório.
 
-O MCP oferece `generate_first_website_draft(lead, research, overwrite=false)`. A operação gera apenas artefato local e metadata estruturada; não retorna URL pública.
+O MCP oferece `generate_first_website_draft(lead, research, overwrite=false, reviewed_content=null, asset_keys=null)`. Assets são selecionados por chave na biblioteca local revisada `<data_dir>/reviewed-assets/<lead_slug>/asset-manifest.json`; a ferramenta não aceita paths ou concessão de direitos. O contrato e seus limites estão no [relatório de Phase 2](phase-2-implementation.md). A operação gera apenas artefato local e metadata estruturada; não retorna URL pública.
+
+Para gerar as duas demonstrações sintéticas com pesquisa/fatos distintos, use `python -m business_prospector.personalized_demo --output /tmp/novo-diretorio-demo`. O destino deve ser novo e explícito; nenhum download ou publicação ocorre. Toda página nova inclui divulgação de demonstração independente e `noindex,nofollow,noarchive`.
+
+`revise_first_website_draft(lead_id, reviewed_content=null, asset_keys=null)` revisa Internal Website ou Sales Preview não publicado sem requalificação. Campos omitidos reutilizam fatos/assets; `{}` limpa fatos opcionais e `[]` limpa assets selecionados. Cada revisão bem-sucedida volta a Internal Website, remove aprovação anterior e exige nova revisão comercial. O resultado registra número, identidade de bytes e caminho privado da versão anterior.
 
 Para um lead persistido, a ferramenta exige `lead.id` e relê o registro no SQLite. A pesquisa enviada deve corresponder ao report persistido desse lead. Reports antigos completos ainda podem gerar drafts se passarem a validacao atual. Somente depois de gerar e validar o artefato ela muda o status de `qualified` para `internal_website`. Geração nunca cria `sales_preview`; falha ou conflito preserva o status anterior.
 
@@ -97,8 +101,8 @@ publicado pode ser reaprovado; substituicao de preview ja publicado continua blo
 ## Limites deliberados e próximos passos
 
 - TODO: conjuntos reutilizáveis de benchmarks com TTL/cache.
-- TODO: biblioteca reutilizável de assets por lead / asset review sheet.
-- TODO: workflow de deploy Locaweb após aprovação.
+- TODO: interface de revisão de assets; a biblioteca local por lead já está integrada.
+- TODO: verificação pública controlada do provider existente após autorização separada.
 - TODO: proposta a partir de site aprovado.
 - TODO: outreach somente com autorização explícita de Gabriel.
 - TODO: aquisição opcional de assets com proveniência e direitos verificados.

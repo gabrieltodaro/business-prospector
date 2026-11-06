@@ -41,6 +41,7 @@ from business_prospector.infrastructure.cpanel import (
     cpanel_configuration_status,
 )
 from business_prospector.infrastructure.sqlite_repository import SQLiteLeadRepository
+from business_prospector.infrastructure.local_site_assets import LocalSiteAssetLibrary
 from business_prospector.package_resources import fake_dentists_resource
 from business_prospector.application.runtime import data_directory
 from business_prospector.application.lead_update import LeadUpdateService
@@ -399,20 +400,39 @@ def qualify_and_save_first_website_candidate(
 @mcp.tool()
 def generate_first_website_draft(
     lead: dict[str, Any], research: dict[str, Any], overwrite: bool = False,
+    reviewed_content: dict[str, Any] | None = None, asset_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     """Generate a persisted qualified lead draft, then mark it internal_website."""
     try:
         lead_id = lead.get("id") if isinstance(lead, dict) else None
         repository = _repository()
         result, updated = PersistedSiteGenerationWorkflow(
-            repository, SiteGenerationService(_sites_root()),
-        ).generate(lead_id, research, overwrite=overwrite)
+            repository, SiteGenerationService(_sites_root()), LocalSiteAssetLibrary(_data_dir() / "reviewed-assets"),
+        ).generate(lead_id, research, overwrite=overwrite, reviewed_content=reviewed_content, asset_keys=asset_keys)
         data = result.to_dict()
         data["lead_status"] = updated.status if updated else None
         return _response("generate_first_website_draft", data, result.error)
     except (ProspectorError, TypeError, ValueError, OSError) as exc:
         LOGGER.warning("generate_first_website_draft failed: %s", exc)
         return _response("generate_first_website_draft", error=str(exc))
+
+
+@mcp.tool()
+def revise_first_website_draft(
+    lead_id: int, reviewed_content: dict[str, Any] | None = None,
+    asset_keys: list[str] | None = None,
+) -> dict[str, Any]:
+    """Revise an unpublished internal draft; preserve its prior revision and require fresh approval."""
+    try:
+        result, updated = PersistedSiteGenerationWorkflow(
+            _repository(), SiteGenerationService(_sites_root()),
+            LocalSiteAssetLibrary(_data_dir() / "reviewed-assets"),
+        ).revise(lead_id, reviewed_content=reviewed_content, asset_keys=asset_keys)
+        data = result.to_dict()
+        data["lead_status"] = updated.status if updated else None
+        return _response("revise_first_website_draft", data, result.error)
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("revise_first_website_draft", error=str(exc))
 
 
 @mcp.tool()

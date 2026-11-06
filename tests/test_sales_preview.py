@@ -65,17 +65,16 @@ def test_missing_malformed_and_visible_placeholder_sites_are_not_ready(tmp_path:
         "valid generated site is required",
     )
     drafts, site = generated_artifact(tmp_path, missing)
+    valid_manifest = (site / "site-manifest.json").read_bytes()
     (site / "site-manifest.json").write_text("{bad")
     assert not SalesPreviewLifecycleService(repository, drafts).readiness(
         missing, content_review_acknowledged=True,
     ).artifact_valid
 
     # Restore a valid artifact, then inject a visible internal marker.
-    SiteGenerationService(tmp_path / "sites").generate(
-        site_lead(name=missing.name, slug=missing.slug), research(), overwrite=True,
-    )
+    (site / "site-manifest.json").write_bytes(valid_manifest)
     index = site / "index.html"
-    index.write_text(index.read_text().replace("Seu próximo contato", "Conteúdo a validar"))
+    index.write_text(index.read_text().replace("</main>", "<p>Conteúdo a validar</p></main>"))
     result = SalesPreviewLifecycleService(repository, drafts).readiness(
         missing, content_review_acknowledged=True,
     )
