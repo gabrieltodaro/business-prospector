@@ -15,6 +15,41 @@ São obrigatórios:
 
 Informação ausente permanece em `missing_information` e aparece como pendência interna. `reviewed_content` opcional exige identidade do alvo, revisor, timestamp e fontes para cada fato; pesquisa de concorrentes não comprova fatos do negócio. O gerador não inventa biografia, credenciais, tratamentos, horários, preços, depoimentos ou alegações clínicas. WhatsApp só vira CTA quando número e confirmação estão presentes.
 
+## Atualizar pesquisa de um lead existente
+
+`refresh_first_website_research(lead_id, research)` substitui explicitamente a pesquisa
+de um lead `first_website` que ainda está `qualified`. Use o `selection_id` de uma
+seleção persistida para esse mesmo alvo e envie o relatório completo com observações
+reais. O Python valida seleção, alvo, benchmarks, frequências e os critérios atuais
+de qualificação antes de persistir. Não reutilize números inválidos nem invente
+evidências para preencher pesquisa histórica.
+
+O retorno contém `data.lead` e `data.previous_artifact_path`. Depois do sucesso, chame
+`generate_first_website_draft(lead=data.lead, research=data.lead.market_research)`.
+O lead permanece `qualified` até a geração concluir; somente então passa para
+`internal_website`. `revise_first_website_draft` continua reservado a drafts internos
+ou previews aprovados ainda não publicados; não altera pesquisa nem requalifica leads.
+
+A atualização transacional modifica somente pesquisa, status da pesquisa e timestamp
+da pesquisa. Identidade, contatos, score, motivo de qualificação, batch e demais dados
+permanecem intactos. Um token do registro inteiro rejeita alterações concorrentes.
+O carregamento especial para refresh não interpreta a pesquisa antiga; as operações
+normais continuam exigindo sua validação. Isso permite substituir registros legados
+com frequências inválidas, seleção ausente ou JSON inválido, sem migração ou reparo
+automático de evidências. SQLite permanece na versão 8.
+
+Um draft antigo do mesmo lead é movido integralmente para
+`<data_dir>/site-revisions/<slug>/<archive_id>`, fora da raiz servida, tornando sua
+aprovação indisponível para publicação. O caminho é retornado para revisão; conteúdo
+revisado e assets não são transferidos automaticamente para o novo draft. Forneça-os
+explicitamente na geração, usando os contratos existentes. Falhas de arquivo ou de
+transação restauram o draft anterior e preservam a pesquisa antiga. O lock existente
+serializa refresh, geração, aprovação e publicação. Reservas de deployment, publicações,
+identidade divergente e metadata insegura bloqueiam o refresh. Outros status não são
+rebaixados para `qualified`. Como na revisão existente, o arquivo é recuperável para
+falhas capturadas; não há journal de recuperação automática entre filesystem e SQLite
+para interrupção abrupta do processo.
+
 ## Originalidade e segurança
 
 Os benchmarks informam padrões de mercado, mas seus textos, HTML, domínios, imagens e identidade não entram no site. O HTML é produzido por templates internos com escaping; dados de pesquisa hostis permanecem dados. URLs aceitas são validadas e links externos em nova aba usam `noopener noreferrer`.

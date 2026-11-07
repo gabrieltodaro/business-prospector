@@ -46,6 +46,7 @@ from business_prospector.package_resources import fake_dentists_resource
 from business_prospector.application.runtime import data_directory
 from business_prospector.application.lead_update import LeadUpdateService
 from business_prospector.application.lead_status import LeadStatusService
+from business_prospector.application.research_refresh import ResearchRefreshService
 
 LOGGER = logging.getLogger("business_prospector.mcp")
 mcp = FastMCP("business-prospector")
@@ -395,6 +396,22 @@ def qualify_and_save_first_website_candidate(
         return _response("qualify_and_save_first_website_candidate", outcome.to_dict())
     except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         return _response("qualify_and_save_first_website_candidate", error=str(exc))
+
+
+@mcp.tool()
+def refresh_first_website_research(lead_id: int, research: dict[str, Any]) -> dict[str, Any]:
+    """Replace qualified first-website research using a valid saved benchmark selection.
+
+    Archives unpublished drafts and invalidates their approvals. Keeps the lead qualified;
+    call generate_first_website_draft with the returned lead and its market_research next.
+    """
+    try:
+        result = ResearchRefreshService(
+            _repository(), ProspectingConfig.from_resource(_config_resource()), _sites_root(),
+        ).refresh(lead_id, research)
+        return _response("refresh_first_website_research", result.to_dict())
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("refresh_first_website_research", error=str(exc))
 
 
 @mcp.tool()

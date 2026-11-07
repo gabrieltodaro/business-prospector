@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
 from typing import Any
 
-from business_prospector.application.ports import DuplicateMatch, PersistenceConflict
+from business_prospector.application.ports import DuplicateMatch, PersistenceConflict, ResearchRefreshSnapshot
 from business_prospector.domain.exceptions import LeadNotFoundError, ValidationError
 from business_prospector.domain.deployment import validate_transition
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
@@ -315,6 +316,44 @@ class SQLiteLeadRepository:
             ).fetchall()
         return [self._row_to_lead(row) for row in rows]
 
+    @staticmethod
+    def _research_refresh_snapshot(row: sqlite3.Row) -> ResearchRefreshSnapshot:
+        # Hash the entire stored row, including unparseable historical research.
+        token = hashlib.sha256(json.dumps(dict(row), sort_keys=True).encode()).hexdigest()
+        return ResearchRefreshSnapshot(
+            SQLiteLeadRepository._row_to_lead(row, load_market_research=False), token,
+        )
+
+    def get_research_refresh_snapshot(self, lead_id: int) -> ResearchRefreshSnapshot:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone()
+        if row is None:
+            raise LeadNotFoundError(f"lead not found: {lead_id}")
+        return self._research_refresh_snapshot(row)
+
+    def replace_market_research(self, snapshot: ResearchRefreshSnapshot, research: dict[str, Any]) -> Lead:
+        report = FirstWebsiteMarketReport.from_dict(research)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM leads WHERE id = ?", (snapshot.lead.id,)).fetchone()
+            if row is None or self._research_refresh_snapshot(row).revision_token != snapshot.revision_token:
+                raise ValidationError("lead changed during research refresh; retry with current data")
+            if row["status"] != "qualified" or row["opportunity_type"] != "first_website":
+                raise ValidationError("research refresh requires a qualified first_website lead")
+            if connection.execute("SELECT 1 FROM preview_deployments WHERE lead_id = ?", (snapshot.lead.id,)).fetchone():
+                raise ValidationError("reserved deployment research cannot be refreshed")
+            connection.execute(
+                "UPDATE leads SET market_research_json = ?, market_research_status = ?, "
+                "market_research_checked_at = ? WHERE id = ?",
+                (json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True), report.status,
+                 utc_now(), snapshot.lead.id),
+            )
+            updated = self._row_to_lead(connection.execute(
+                "SELECT * FROM leads WHERE id = ?", (snapshot.lead.id,),
+            ).fetchone())
+            updated.validate()
+        return updated
+
     def update(self, lead_id: int, changes: dict[str, object]) -> Lead:
         current = self.get(lead_id)
         if current is None:
@@ -451,7 +490,7 @@ class SQLiteLeadRepository:
         }
 
     @staticmethod
-    def _row_to_lead(row: sqlite3.Row) -> Lead:
+    def _row_to_lead(row: sqlite3.Row, *, load_market_research: bool = True) -> Lead:
         assessment = WebsiteAssessment(
             layout=bool(row["website_issue_layout"]),
             mobile=bool(row["website_issue_mobile"]),
@@ -468,7 +507,7 @@ class SQLiteLeadRepository:
             structured = WebsiteAssessmentReport.from_dict(payload).to_dict()
         market_research: dict[str, Any] | None = None
         raw_market = row["market_research_json"]
-        if raw_market:
+        if raw_market and load_market_research:
             market_research = FirstWebsiteMarketReport.from_dict(
                 json.loads(raw_market), allow_legacy=True,
             ).to_dict()

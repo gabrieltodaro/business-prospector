@@ -176,6 +176,12 @@ O fluxo separado de [oportunidades de primeiro site](docs/first-website.md) pesq
 
 Leads `first_website` qualificados podem alimentar a [geração local de primeiro site](docs/site-generation.md). O gerador produz HTML/CSS original para revisão interna, preserva fatos desconhecidos como pendências e não publica nem contata o prospect.
 
+Para substituir pesquisa histórica de um lead ainda `qualified`, use
+`refresh_first_website_research(lead_id, research)` com uma seleção de benchmarks
+persistida e válida para o alvo. Depois, passe o lead e sua pesquisa retornados para
+`generate_first_website_draft`. O refresh preserva a qualificação, arquiva drafts
+antigos e invalida suas aprovações; não exige migração nem edição manual do SQLite.
+
 A geração visual 3.0 transforma pesquisa validada em estratégia determinística, conteúdo revisado e componentes estáticos, com proveniência explícita de fatos e assets. [Phase 2](docs/phase-2-implementation.md) documenta personalização, revisão segura, demonstrações sintéticas e compatibilidade. Imagens do website atual podem ser candidatas internas em redesign; redes sociais nunca são baixadas automaticamente e aprovação para draft nunca equivale a direito de publicação.
 
 Após geração e validação bem-sucedidas, o pipeline move o lead para `internal_website` (**Internal Website**): há um artefato válido para revisão da Gapps, mas ele ainda não está aprovado para uso comercial. **Sales Preview** (`sales_preview`) é uma etapa posterior e exige aprovação humana explícita de conteúdo e dos direitos de publicação de todos os assets. Ela não significa que houve contato com o prospect.

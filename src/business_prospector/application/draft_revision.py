@@ -11,7 +11,8 @@ from business_prospector.domain.exceptions import ValidationError
 
 
 @contextmanager
-def install_validated_draft(staging: Path, destination: Path) -> Iterator[Path | None]:
+def archive_draft(destination: Path) -> Iterator[Path | None]:
+    """Remove a draft from active use, restoring it if the dependent operation fails."""
     previous: Path | None = None
     if destination.is_symlink():
         raise ValidationError('draft destination cannot be a symlink')
@@ -23,14 +24,23 @@ def install_validated_draft(staging: Path, destination: Path) -> Iterator[Path |
         history.mkdir(parents=True, exist_ok=True)
         previous = history / str(uuid4())
         destination.rename(previous)
-    installed = False
     try:
-        staging.replace(destination)
-        installed = True
         yield previous
     except BaseException:
-        if installed and destination.exists():
-            shutil.rmtree(destination)
         if previous is not None:
             previous.replace(destination)
         raise
+
+
+@contextmanager
+def install_validated_draft(staging: Path, destination: Path) -> Iterator[Path | None]:
+    with archive_draft(destination) as previous:
+        installed = False
+        try:
+            staging.replace(destination)
+            installed = True
+            yield previous
+        except BaseException:
+            if installed and destination.exists():
+                shutil.rmtree(destination)
+            raise
