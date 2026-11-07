@@ -45,13 +45,18 @@ class FakeStockProvider:
         return self.image
 
 
-@pytest.fixture
-def setup(tmp_path):
+@pytest.fixture(params=["pexels", "pixabay"])
+def setup(tmp_path, request):
     repo = SQLiteLeadRepository(tmp_path / 'test.db')
     prospecting = FirstWebsiteProspectingService(repo, ProspectingConfig())
     report = selected_research(prospecting, candidate(), research())
     lead = prospecting.qualify_and_save(candidate(), report, 'stock-tests').lead
     provider = FakeStockProvider()
+    if request.param == 'pixabay':
+        provider.display_name, provider.attribution_url = 'Pixabay', 'https://pixabay.com'
+        provider.photos = (photo(provider='pixabay', source_page='https://pixabay.com/photos/dental-123/',
+            download_url='https://cdn.pixabay.com/photo/dental.jpg', photographer_url='https://pixabay.com/users/synthetic-42/',
+            license_url='https://pixabay.com/service/license-summary/'),)
     return repo, lead, provider, StockPhotographyService(repo, provider, tmp_path), tmp_path
 
 
@@ -81,7 +86,7 @@ def test_search_does_not_download_or_approve(setup):
     _, lead, provider, service, root = setup
     result = service.search(lead.id)
     assert result['status'] == 'candidates' and len(result['photos']) == 1
-    assert result['attribution']['url'] == 'https://www.pexels.com'
+    assert result['attribution']['url'] == provider.attribution_url
     assert provider.downloads == 0 and not (root / 'reviewed-assets').exists()
 
 
@@ -98,7 +103,7 @@ def test_review_ingestion_generation_and_approval_invalidation(setup):
     result, updated = workflow.generate(lead.id, lead.market_research, asset_keys=[asset.key])
     path = Path(result.site_path)
     html = (path / 'index.html').read_text()
-    assert 'Imagem ilustrativa de banco' in html and 'Photos provided by Pexels' in html
+    assert 'Imagem ilustrativa de banco' in html and f'Photos provided by {provider.display_name}' in html
     assert 'Synthetic Photographer' in html and '<img src="https:' not in html
     manifest = json.loads((path / 'site-manifest.json').read_text())
     assert manifest['outreach_image_context']['contains_illustrative_stock'] is True
@@ -280,15 +285,15 @@ def test_http_errors_redact_payload_and_honor_retry_after(monkeypatch):
     from urllib.error import HTTPError
     from email.message import Message
     import io
-    from business_prospector.infrastructure import pexels
+    from business_prospector.infrastructure import stock_http
     headers = Message()
     headers['Retry-After'] = '7200'
     class Opener:
         def open(self, *args, **kwargs):
             raise HTTPError('https://api.pexels.com/', 429, 'PRIVATE BODY', headers, io.BytesIO(b'PRIVATE BODY'))
-    monkeypatch.setattr(pexels, 'build_opener', lambda *args: Opener())
+    monkeypatch.setattr(stock_http, 'build_opener', lambda *args: Opener())
     with pytest.raises(StockProviderUnavailable) as error:
-        pexels._request('https://api.pexels.com/v1/search', {'Authorization':'PRIVATE KEY'}, 1024)
+        stock_http._request('https://api.pexels.com/v1/search', {'Authorization':'PRIVATE KEY'}, 1024)
     assert error.value.retry_after == 7200
     assert 'PRIVATE' not in str(error.value)
 

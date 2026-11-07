@@ -454,20 +454,19 @@ def revise_first_website_draft(
 
 def _stock_service():
     from business_prospector.application.stock_photography import StockPhotographyService
-    from business_prospector.infrastructure.pexels import PexelsStockPhotoProvider
-    key = os.environ.get("PEXELS_API_KEY", "")
-    provider = PexelsStockPhotoProvider(key, _data_dir() / "stock-cache") if key else None
+    from business_prospector.infrastructure.stock_provider import configured_stock_provider
+    provider = configured_stock_provider(os.environ, _data_dir() / "stock-cache")
     return StockPhotographyService(_repository(), provider, _data_dir())
 
 
 @mcp.tool()
 def search_stock_photos(lead_id: int, reviewed_content: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Find category/research-matched illustrative stock candidates; never approve or generate automatically.
+    """Find illustrative stock candidates for a human review request; never run bulk/background searches.
 
-    Display the returned Pexels and photographer attribution links while reviewing candidates.
+    Display the returned provider and photographer attribution links while reviewing candidates.
     Missing configuration, unavailable providers and unsuitable results use typography fallback.
     """
-    from business_prospector.infrastructure.pexels import StockProviderUnavailable
+    from business_prospector.infrastructure.stock_http import StockProviderUnavailable
     try:
         return _response("search_stock_photos", _stock_service().search(lead_id, reviewed_content))
     except StockProviderUnavailable:

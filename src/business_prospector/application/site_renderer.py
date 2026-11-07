@@ -81,8 +81,10 @@ def render_html(brief: FirstWebsiteSiteBrief, assets: tuple[SiteAsset, ...], mod
     visual = f'<figure class="hero-media">{image(photos[0], hero=True)}{photo_caption(photos[0])}</figure>' if photos else ''
     headline = '<br>'.join(escape(part) for part in model.headline.split('\n'))
     # Preview branding is distinct from the business identity; no implied client endorsement.
-    credits = ('<a class="provider-credit" href="https://www.pexels.com" target="_blank" rel="noopener noreferrer">Photos provided by Pexels</a>'
-               if any(a.stock and a.stock.provider == 'pexels' for a in assets) else '')
+    provider_links = {'pexels': ('Pexels', 'https://www.pexels.com'), 'pixabay': ('Pixabay', 'https://pixabay.com')}
+    used_providers = {a.stock.provider for a in assets if a.stock}
+    credits = ''.join(f'<a class="provider-credit" href="{url}" target="_blank" rel="noopener noreferrer">Photos provided by {label}</a>'
+                      for provider, (label, url) in provider_links.items() if provider in used_providers)
     return f'''<!doctype html>
 <html lang="pt-BR">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

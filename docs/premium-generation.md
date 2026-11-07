@@ -43,9 +43,9 @@ Reviewed November 7, 2026, using official documentation:
 
 | Provider | API and license implications | Decision |
 |---|---|---|
-| **Pexels** | Free API, orientation filters and resized image sources. General license permits commercial website use and local downloads; API guidance asks for prominent Pexels links and photographer credit. Default API limits are 200/hour and 20,000/month. No standalone resale, stock-library redistribution, implied endorsement or offensive treatment of identifiable people. | Primary adapter. Compatible with local, immutable, reviewed website assets. |
+| **Pexels** | Free API, orientation filters and resized image sources. General license permits commercial website use and local downloads; API guidance asks for prominent Pexels links and photographer credit. Default API limits are 200/hour and 20,000/month. No standalone resale, stock-library redistribution, implied endorsement or offensive treatment of identifiable people. | Optional adapter for existing keys; new key issuance is paused according to the operator. |
 | Unsplash | API requires hotlinked returned image URLs, photographer/Unsplash attribution and download-event tracking. General license and API obligations are distinct. | Not implemented: mandatory hotlinking conflicts with the existing local-file inventory/publication model. |
-| Pixabay | API permits local downloads; permanent image hotlinking is prohibited. Requires 24-hour search caching, prohibits systematic mass downloads; default limit is 100 requests/60 seconds. Its content license also restricts standalone distribution and certain trademark/person uses. | Viable alternative behind the provider port; not implemented or silently substituted. |
+| Pixabay | API permits local downloads; permanent image hotlinking is prohibited. Requires 24-hour search caching, prohibits systematic mass downloads; default limit is 100 requests/60 seconds. Its content license also restricts standalone distribution and certain trademark/person uses. | Selected and implemented; compatible with locally hosted reviewed assets. |
 
 References: [Pexels API](https://www.pexels.com/api/documentation/),
 [Pexels license](https://www.pexels.com/legal-pages/license/),
@@ -54,7 +54,7 @@ References: [Pexels API](https://www.pexels.com/api/documentation/),
 [Pixabay API](https://pixabay.com/api/docs/),
 [Pixabay license](https://pixabay.com/service/license-summary/).
 
-Pexels credit is rendered beside each stock image and in a provider link in the
+Provider credit is rendered beside each stock image and in a provider link in the
 footer. Every stock image has a visible Portuguese illustrative-use disclosure;
 no stock photo is labeled as the actual business, staff, customers or work. The
 reviewer must assess relevance, context, logos/brands, identifiable people and
@@ -63,13 +63,22 @@ This feature composes websites, not a stock gallery or a redistribution service.
 
 ## Explicit MCP workflow
 
-Configure `PEXELS_API_KEY` in the authorized runtime environment. The existing
-launcher can recover this single additional allowlisted variable from its normal
-service-env mechanism; no credential is logged, passed in tool arguments or stored
-in manifests. No paid service is mandatory. Missing configuration uses typography.
-No operational configuration was changed while implementing this feature.
+Configure `PIXABAY_API_KEY` in the authorized runtime environment. Keep
+`PEXELS_API_KEY` for optional Pexels use. `BUSINESS_PROSPECTOR_STOCK_PROVIDER` accepts
+`auto` (default, prefers configured Pixabay, otherwise Pexels), `pixabay`, `pexels`,
+or `none`. Explicit selection with no matching key uses typography; errors never
+silently switch providers. Set `pexels` explicitly to retain it when both keys exist.
+The launcher allowlists these variables in its existing service-env mechanism;
+credentials never enter MCP arguments, artifacts or diagnostics. Changing providers
+requires a new search before reviewing pending selections; existing reviewed local
+assets retain their original provider and license. No database migration is needed.
+No operational configuration was changed.
 
-1. `search_stock_photos(lead_id, reviewed_content=null)` derives a bounded query from
+See the [current provider evaluation](stock-provider-evaluation.md) for API access,
+licensing, hosting and account-verification limits.
+
+1. For an individual human request (never a background/bulk job),
+   `search_stock_photos(lead_id, reviewed_content=null)` derives a bounded query from
    category, benchmark gallery emphasis and reviewed cuisine/menu facts. Present the
    returned provider/photographer links with candidates. At most one API search is
    made (15 results examined, up to six retained), with no automatic pagination.
@@ -87,18 +96,25 @@ No operational configuration was changed while implementing this feature.
    A revised artifact loses its previous commercial approval, including when photos
    are removed. Reserved/published artifacts remain protected.
 
-`StockPhotoProvider` is the application port. `PexelsStockPhotoProvider` owns HTTP,
-provider-specific parsing, a 24-hour disk search cache and persisted failure cooldown.
-It honors longer `Retry-After` values, does not automatically retry, bounds request
-size/time, rejects redirects, and limits downloads to the fixed Pexels image origin.
-Only API requests receive the authorization header. Image MIME, signature, size,
-checksum, inventory and no-follow path checks remain mandatory. The inventory update
-uses immutable unique asset keys and atomic manifest replacement; failure preserves
-previous entries and removes the new image. Generation still consumes local bytes.
+`StockPhotoProvider` is the application port. `PixabayStockPhotoProvider` and
+`PexelsStockPhotoProvider` parse their own responses and share bounded transport,
+24-hour disk caching and persistent failure cooldown. Pixabay caches only normalized
+candidate metadata in `stock-cache/pixabay`; the legacy Pexels cache stays in
+`stock-cache`. Transport rejects redirects, sanitizes errors and honors longer
+`Retry-After` values. Pixabay's required query-string key is sent only to its API;
+image downloads carry no credentials. Images are restricted to fixed provider
+origins, then validated for MIME, signature, size, checksum and safe inventory paths.
+Immutable keys and atomic manifest replacement preserve existing assets on failure.
+Generation consumes local bytes and retains all commercial approval boundaries.
 
-Provider errors, irrelevant results and unsupported categories leave generation
-available through typography. API search/download behavior is tested with injected
-transports; no authenticated Pexels API request was made in this implementation run.
+Pixabay uses the standard `largeImageURL` (up to 1280 pixels), not restricted full-API
+originals. Candidate dimensions account for this cap; unsuitable resolution/crops
+use typography. Expired remote download URLs require another search/review; existing
+approved local bytes remain intact. Matching tags are hints, never evidence that a
+photo depicts the lead or that third-party rights are cleared.
+
+Provider failures and unsupported categories use typography. Tests use injected
+transports; no authenticated provider requests were made during this implementation.
 
 ## Outreach metadata
 
@@ -144,7 +160,7 @@ were inspected and the copy/image selection refined; results are in the accompan
 - Matching uses category/cuisine vocabulary, caption keywords and dimensions, not
   semantic image recognition. Human review remains essential; unknown niches receive
   typography. Query taxonomies can be extended without changing the renderer/provider.
-- Only Pexels is implemented. Credentials, account quota and current provider availability
+- Pixabay and Pexels are implemented. Credentials, account quota and current provider availability
   must be verified in an authorized runtime before live API use.
 - System fonts vary by operating system. Browser evidence covers Chromium, not a claim
   of manual screen-reader or Safari/Firefox certification.

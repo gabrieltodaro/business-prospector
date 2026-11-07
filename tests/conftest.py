@@ -27,6 +27,8 @@ def isolated_runtime(tmp_path, monkeypatch):
     }.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("PEXELS_API_KEY", raising=False)
+    monkeypatch.delenv("PIXABAY_API_KEY", raising=False)
+    monkeypatch.delenv("BUSINESS_PROSPECTOR_STOCK_PROVIDER", raising=False)
     original = socket.socket.connect
 
     def connect(sock, address):
