@@ -560,9 +560,9 @@ class HostGatorPreviewDeploymentProvider:
                     '\\' in path or any(ord(char) < 32 or ord(char) == 127 for char in path) or
                     PurePosixPath(path).name != self._config.username):
                 raise CPanelError('unsafe_path', 'cannot establish account home directory')
-            # HostGator rejects ".". Inspect the documented absolute home instead,
-            # retaining the existing no-symlink and exact-path requirements.
-            info = self._client.file_information(path)
+            # HostGator resolves "/" to the account home; an absolute home path
+            # is treated as relative. Still require the returned fullpath to match.
+            info = self._client.file_information("/")
             if (not isinstance(info, dict) or info.get('exists') not in (1, '1') or
                     info.get('type') != 'dir' or info.get('fullpath') != path):
                 raise CPanelError('unsafe_path', 'cannot establish account home directory')

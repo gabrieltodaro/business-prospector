@@ -80,7 +80,9 @@ class FakeTransport:
             self.safety_requests.append(request)
             path = params['path'][0]
             assert path != '.', 'HostGator rejects dot as a Fileman path'
-            return response({'exists': 1, 'type': 'dir', 'fullpath': path if path.startswith('/') else '/home/prospector/' + path})
+            if path.startswith('/') and path != '/':
+                return response(None, status=0, errors=['relative directory not found'])
+            return response({'exists': 1, 'type': 'dir', 'fullpath': '/home/prospector' if path == '/' else '/home/prospector/' + path})
         if self.publication and '/list_files?' in request.url and params.get('dir', [''])[0].startswith('public_html/sales-previews/drlaura'):
             self.safety_requests.append(request)
             return response({'files': [], 'dirs': []})

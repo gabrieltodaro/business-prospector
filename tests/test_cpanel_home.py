@@ -17,8 +17,11 @@ class ScriptedTransport:
     def send(self, request):
         self.requests.append(request)
         # Reproduce HostGator's rejection, even if a test forgets to assert the URL.
-        if parse_qs(urlsplit(request.url).query).get('path') == ['.']:
+        path = parse_qs(urlsplit(request.url).query).get('path', [''])[0]
+        if path == '.':
             return response(None, status=0, errors=['invalid Fileman path'])
+        if path.startswith('/') and path != '/':
+            return response(None, status=0, errors=['relative directory not found'])
         assert self.responses, 'unexpected UAPI call'
         return self.responses.pop(0)
 
@@ -33,7 +36,7 @@ def directory(path, **changes):
 
 @pytest.mark.parametrize('home', ['/home/prospector', '/home2/prospector', '/srv/accounts/prospector'])
 @pytest.mark.parametrize('encode', [response, flattened_response])
-def test_home_uses_documented_scoped_uapi_request_and_absolute_fileman_path(home, encode):
+def test_home_uses_scoped_uapi_lookup_and_account_root_fileman_path(home, encode):
     transport = ScriptedTransport(encode({'home': home}), encode(directory(home)))
     provider = provider_for(transport)
     assert provider._account_home() == home
@@ -44,7 +47,7 @@ def test_home_uses_documented_scoped_uapi_request_and_absolute_fileman_path(home
     assert urlsplit(first.url).path == '/execute/Variables/get_user_information'
     assert parse_qs(urlsplit(first.url).query) == {'name': ['home']}
     assert urlsplit(second.url).path == '/execute/Fileman/get_file_information'
-    assert parse_qs(urlsplit(second.url).query) == {'path': [home], 'show_hidden': ['1']}
+    assert parse_qs(urlsplit(second.url).query) == {'path': ['/'], 'show_hidden': ['1']}
 
 
 @pytest.mark.parametrize('data', [
@@ -124,7 +127,7 @@ def test_home_discovery_failure_has_no_fallback_or_mutation(tmp_path):
     assert '/Variables/get_user_information?' in transport.requests[0].url
 
 
-def test_publish_succeeds_when_hostgator_rejects_dot(tmp_path):
+def test_publish_succeeds_when_hostgator_requires_account_root(tmp_path):
     transport = publish_transport()
     result = provider_for(transport).publish(site(tmp_path), 'drlaura')
     assert result.deployment_status == 'uploaded'
@@ -132,4 +135,20 @@ def test_publish_succeeds_when_hostgator_rejects_dot(tmp_path):
     home_calls = [item for item in calls if '/Variables/get_user_information?' in item.url]
     assert len(home_calls) == 1
     assert all(parse_qs(urlsplit(item.url).query).get('path') != ['.'] for item in calls)
+    fileman_paths = [parse_qs(urlsplit(item.url).query)['path'][0]
+                     for item in calls if '/Fileman/get_file_information?' in item.url]
+    assert fileman_paths[0] == '/'
+    assert all(path == '/' or not path.startswith('/') for path in fileman_paths)
     assert result.files_uploaded == 3
+
+
+def test_absolute_home_is_rejected_but_account_root_resolves_to_same_home():
+    home = '/home2/prospector'
+    transport = ScriptedTransport(response({'home': home}), response(directory(home)))
+    client = CPanelUapiClient(config(), transport)
+    with pytest.raises(CPanelError) as caught:
+        client.file_information(home)
+    assert caught.value.code == 'not_found'
+    provider = HostGatorPreviewDeploymentProvider(config(), client)
+    assert provider._account_home() == home
+    assert parse_qs(urlsplit(transport.requests[-1].url).query)['path'] == ['/']

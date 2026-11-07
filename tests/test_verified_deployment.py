@@ -34,7 +34,9 @@ class FakeHosting:
 
     def file_information(self, path):
         assert path != '.', 'HostGator rejects dot as a Fileman path'
-        if path == '/home/prospector':
+        if path.startswith('/') and path != '/':
+            raise CPanelError('not_found', 'relative directory not found')
+        if path == '/':
             return {'type': 'dir', 'fullpath': '/home/prospector', 'exists': 1}
         return {'type': 'link' if path in self.links else 'dir', 'fullpath': '/home/prospector/' + path,
                 'exists': int(path in self.dirs or path in self.links)}

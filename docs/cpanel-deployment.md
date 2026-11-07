@@ -53,10 +53,12 @@ preview root are rejected. Configuration ownership remains an operator responsib
 the application cannot infer ownership of unrelated domains.
 
 Before mutation, `Variables/get_user_information?name=home` retrieves only the account
-home setting. The publisher validates that absolute path, then uses
-`Fileman/get_file_information` to check it and each existing path component. It never
-uses `get_file_information('.')`, which HostGator rejects, or guesses `/home/<user>`;
-other home mounts such as `/home2/<user>` work without configuration changes. Remote
+home setting. The publisher validates that absolute path, then inspects the account
+root with `Fileman/get_file_information('/')`, requiring its returned `fullpath` to
+match the discovered home. HostGator treats an absolute home argument as relative
+and rejects `'.'`. Each existing child path component is still checked separately;
+the publisher never guesses `/home/<user>`.
+Other home mounts such as `/home2/<user>` work without configuration changes. Remote
 symlinks, non-directories, noncanonical paths and unexpected resolved paths fail closed. Absolute document roots must match the actual account home
 exactly; suffix matching is prohibited. Existing domains or destination entries block
 first publication. Database uniqueness reserves the URL and destination for one lead.
