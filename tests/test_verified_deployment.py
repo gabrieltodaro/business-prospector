@@ -29,8 +29,12 @@ class FakeHosting:
         self.lose_ack = False
         self.uploads = 0
 
+    def account_home_information(self):
+        return {'home': '/home/prospector'}
+
     def file_information(self, path):
-        if path == '.':
+        assert path != '.', 'HostGator rejects dot as a Fileman path'
+        if path == '/home/prospector':
             return {'type': 'dir', 'fullpath': '/home/prospector', 'exists': 1}
         return {'type': 'link' if path in self.links else 'dir', 'fullpath': '/home/prospector/' + path,
                 'exists': int(path in self.dirs or path in self.links)}

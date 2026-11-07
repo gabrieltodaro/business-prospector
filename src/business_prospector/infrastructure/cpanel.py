@@ -213,6 +213,10 @@ class CPanelUapiClient:
             "dir": directory, "show_hidden": "1",
         })
 
+    def account_home_information(self) -> Any:
+        """Request only the documented home field, not unrelated account settings."""
+        return self._get('Variables', 'get_user_information', {'name': 'home'})
+
     def file_information(self, path: str) -> Any:
         return self._get('Fileman', 'get_file_information', {'path': path, 'show_hidden': '1'})
 
@@ -549,11 +553,18 @@ class HostGatorPreviewDeploymentProvider:
 
     def _account_home(self) -> str:
         if self._home is None:
-            info = self._client.file_information('.')
-            path = info.get('fullpath') if isinstance(info, dict) else None
-            if (not isinstance(path, str) or not path.startswith('/') or
+            account = self._client.account_home_information()
+            path = account.get('home') if isinstance(account, dict) else None
+            if (not isinstance(path, str) or not path.startswith('/') or path.startswith('//') or
                     str(PurePosixPath(path)) != path or '..' in PurePosixPath(path).parts or
-                    info.get('type') != 'dir' or PurePosixPath(path).name != self._config.username):
+                    '\\' in path or any(ord(char) < 32 or ord(char) == 127 for char in path) or
+                    PurePosixPath(path).name != self._config.username):
+                raise CPanelError('unsafe_path', 'cannot establish account home directory')
+            # HostGator rejects ".". Inspect the documented absolute home instead,
+            # retaining the existing no-symlink and exact-path requirements.
+            info = self._client.file_information(path)
+            if (not isinstance(info, dict) or info.get('exists') not in (1, '1') or
+                    info.get('type') != 'dir' or info.get('fullpath') != path):
                 raise CPanelError('unsafe_path', 'cannot establish account home directory')
             self._home = path
         return self._home

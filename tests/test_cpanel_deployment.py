@@ -72,10 +72,15 @@ class FakeTransport:
     def send(self, request: HttpRequest) -> HttpResponse:
         from urllib.parse import parse_qs, urlsplit
         params = parse_qs(urlsplit(request.url).query)
+        if '/Variables/get_user_information?' in request.url:
+            self.safety_requests.append(request)
+            assert params == {'name': ['home']}
+            return response({'home': '/home/prospector'})
         if '/get_file_information?' in request.url:
             self.safety_requests.append(request)
             path = params['path'][0]
-            return response({'exists': 1, 'type': 'dir', 'fullpath': '/home/prospector' + ('' if path == '.' else '/' + path)})
+            assert path != '.', 'HostGator rejects dot as a Fileman path'
+            return response({'exists': 1, 'type': 'dir', 'fullpath': path if path.startswith('/') else '/home/prospector/' + path})
         if self.publication and '/list_files?' in request.url and params.get('dir', [''])[0].startswith('public_html/sales-previews/drlaura'):
             self.safety_requests.append(request)
             return response({'files': [], 'dirs': []})

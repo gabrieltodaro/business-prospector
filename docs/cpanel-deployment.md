@@ -52,9 +52,12 @@ one child hostname and directory. The known lead website hostname and its use as
 preview root are rejected. Configuration ownership remains an operator responsibility;
 the application cannot infer ownership of unrelated domains.
 
-Before mutation, `Fileman/get_file_information` checks the account home and each existing
-path component. Remote symlinks, non-directories, noncanonical paths and unexpected
-resolved paths fail closed. Absolute document roots must match the actual account home
+Before mutation, `Variables/get_user_information?name=home` retrieves only the account
+home setting. The publisher validates that absolute path, then uses
+`Fileman/get_file_information` to check it and each existing path component. It never
+uses `get_file_information('.')`, which HostGator rejects, or guesses `/home/<user>`;
+other home mounts such as `/home2/<user>` work without configuration changes. Remote
+symlinks, non-directories, noncanonical paths and unexpected resolved paths fail closed. Absolute document roots must match the actual account home
 exactly; suffix matching is prohibited. Existing domains or destination entries block
 first publication. Database uniqueness reserves the URL and destination for one lead.
 A digest of the cPanel origin/account binds the reservation to its original runtime
@@ -197,6 +200,7 @@ cleanup. HostGator behavior and account permissions remain **unvalidated live**.
 
 - [cPanel UAPI overview](https://api.docs.cpanel.net/openapi/cpanel/overview/) and [API tokens](https://api.docs.cpanel.net/cpanel/tokens/).
 - [Create subdomain](https://api.docs.cpanel.net/specifications/cpanel.openapi/subdomain/subdomain-addsubdomain), [domain configuration](https://api.docs.cpanel.net/specifications/cpanel.openapi/domain-information/domaininfo-domains_data).
+- [Account home setting](https://api.docs.cpanel.net/specifications/cpanel.openapi/account-information/variables-get_user_information).
 - [Upload files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-upload_files), [list files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-list_files), [file information](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-get_file_information).
 - [Python SSL contexts](https://docs.python.org/3.11/library/ssl.html#ssl.create_default_context), [HTTP client](https://docs.python.org/3.11/library/http.client.html), [SQLite backup](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup).
 - [SQLite transactions](https://sqlite.org/lang_transaction.html), [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools).
