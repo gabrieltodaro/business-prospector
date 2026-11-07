@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from business_prospector.domain.stock_photography import StockPhoto, StockSearchPlan
+    from .site_assets import DownloadedImage
 from pathlib import Path
 
 from business_prospector.domain.site_assets import SiteAsset
@@ -84,3 +88,12 @@ class LeadRepository(Protocol):
 
 class ReviewedSiteAssetLibrary(Protocol):
     def load(self, lead: Lead, keys: list[str]) -> tuple[tuple[SiteAsset, ...], Path]: ...
+
+
+class StockPhotoProvider(Protocol):
+    """Search/download transport is separate from human review and asset persistence."""
+    display_name: str
+    attribution_url: str
+
+    def search(self, plan: "StockSearchPlan") -> tuple["StockPhoto", ...]: ...
+    def download(self, photo: "StockPhoto") -> "DownloadedImage": ...

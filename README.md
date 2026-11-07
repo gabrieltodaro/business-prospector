@@ -182,6 +182,8 @@ persistida e válida para o alvo. Depois, passe o lead e sua pesquisa retornados
 `generate_first_website_draft`. O refresh preserva a qualificação, arquiva drafts
 antigos e invalida suas aprovações; não exige migração nem edição manual do SQLite.
 
+A [geração premium 4.0](docs/premium-generation.md) adiciona direção visual determinística, cinco composições de hero, fotografia Pexels revisada e fallback tipográfico. As ferramentas `search_stock_photos` e `approve_stock_photo_for_draft` preparam assets locais sem conceder aprovação comercial. `PEXELS_API_KEY` é opcional; credenciais não entram nas ferramentas ou artefatos.
+
 A geração visual 3.0 transforma pesquisa validada em estratégia determinística, conteúdo revisado e componentes estáticos, com proveniência explícita de fatos e assets. [Phase 2](docs/phase-2-implementation.md) documenta personalização, revisão segura, demonstrações sintéticas e compatibilidade. Imagens do website atual podem ser candidatas internas em redesign; redes sociais nunca são baixadas automaticamente e aprovação para draft nunca equivale a direito de publicação.
 
 Após geração e validação bem-sucedidas, o pipeline move o lead para `internal_website` (**Internal Website**): há um artefato válido para revisão da Gapps, mas ele ainda não está aprovado para uso comercial. **Sales Preview** (`sales_preview`) é uma etapa posterior e exige aprovação humana explícita de conteúdo e dos direitos de publicação de todos os assets. Ela não significa que houve contato com o prospect.

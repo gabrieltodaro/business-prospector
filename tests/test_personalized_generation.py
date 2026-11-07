@@ -125,7 +125,8 @@ def test_theme_varies_by_industry_and_reviewed_choices(tmp_path):
     _, _, food = generate(tmp_path / 'food', restaurant, observed('menu', category='restaurant'), content(restaurant, menu=['Prato do dia']))
     _, html, brand = generate(tmp_path / 'brand', facts=content(palette='slate', typography='modern'))
     assert dentist['strategy']['palette'] == 'sage' and food['strategy']['palette'] == 'terracotta'
-    assert dentist['strategy']['hero_composition'] != food['strategy']['hero_composition']
+    assert dentist['strategy']['typography'] != food['strategy']['typography']
+    assert dentist['strategy']['hero_composition'] == food['strategy']['hero_composition'] == 'minimal_typography'
     assert 'palette-slate type-modern' in html
     assert next(item for item in brand['strategy']['decisions'] if item['subject']=='palette')['evidence'] == ['brief']
 

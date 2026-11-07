@@ -18,7 +18,7 @@ from business_prospector.domain.site_assets import SiteAsset
 from business_prospector.application.ports import LeadRepository, ReviewedSiteAssetLibrary
 from business_prospector.domain.models import Lead
 
-GENERATOR_VERSION = "3.0.0"
+GENERATOR_VERSION = "4.0.0"
 REQUIRED_FILES = ("index.html", "styles.css", "site-manifest.json", "README.md")
 GENERATED_FILES = ("index.html", "styles.css", "assets/", "site-manifest.json", "README.md")
 
@@ -75,7 +75,7 @@ class SiteDraftService:
                 key: raw_manifest.get(key) for key in (
                     "opportunity_type", "generated_at", "generator_version", "source_batch_id",
                     "benchmark_market", "strategy_version", "missing_information", "revision", "preview_kind",
-                    "strategy", "indexing_policy",
+                    "strategy", "indexing_policy", "outreach_image_context",
                 )
             }
             return SiteDraftInfo(True, slug, site, generated_at, "generated", safe_manifest)
@@ -257,13 +257,16 @@ class SiteGenerationService:
                     raise ValidationError('invalid existing asset inventory')
                 assets = tuple(SiteAsset.from_manifest(item) for item in raw_assets)
                 asset_source_root = destination
-        assets = assets or ()
+        assets = tuple(asset for asset in (assets or ()) if not (asset.key == 'hero-visual' and asset.source_type == 'generated' and asset.asset_type == 'illustration'))
         if len(assets) > 30 or len({asset.key for asset in assets}) != len(assets):
             raise ValidationError('draft supports up to 30 distinct assets')
         image_count = sum(asset.approval_status in {'approved_for_draft', 'approved_for_publish'}
                           and asset.asset_type != 'logo' for asset in assets)
+        hero_asset = next((asset for asset in assets if asset.asset_type != 'logo' and
+                           asset.approval_status in {'approved_for_draft', 'approved_for_publish'}), None)
+        ratio = hero_asset.width / hero_asset.height if hero_asset and hero_asset.width and hero_asset.height else None
         brief = FirstWebsiteSiteBrief.from_inputs(lead, research, reviewed_content=reviewed_content,
-                                                  image_count=image_count, allow_revision=overwrite)
+                                                  image_count=image_count, hero_aspect_ratio=ratio, allow_revision=overwrite)
         self._sites_root.mkdir(parents=True, exist_ok=True)
         temp = Path(tempfile.mkdtemp(prefix=f'.{brief.lead_slug}-', dir=self._sites_root))
         try:
@@ -305,7 +308,7 @@ class SiteGenerationService:
         asset_source_root: Path | None,
     ) -> tuple[SiteAsset, ...]:
         from .artifacts import read_local_asset
-        from .site_renderer import render_html, render_css
+        from .site_renderer import render_html, render_css, stock_outreach_context
         from business_prospector.domain.website_content_model import WebsiteContentModel
         assets_dir = directory / 'assets'
         assets_dir.mkdir()
@@ -325,26 +328,6 @@ class SiteGenerationService:
             name = asset.key + Path(asset.local_file or '').suffix.lower()
             (assets_dir / name).write_bytes(content)
             rendered_assets.append(asset.with_local_file(f'assets/{name}', asset.checksum or '', asset.mime_type or '', len(content)))
-        if not any(asset.asset_type != 'logo' for asset in rendered_assets):
-            if any(asset.key == 'hero-visual' for asset in rendered_assets):
-                raise ValidationError('hero-visual is reserved for the decorative fallback')
-            fallback = _HERO_SVG
-            swatches = {
-                'terracotta': {'#d8ece5': '#ead5c3', '#f1dfc5': '#f2e6d1', '#2f7869': '#974125'},
-                'slate': {'#d8ece5': '#d3e2eb', '#f1dfc5': '#e2e8ec', '#2f7869': '#315b73'},
-            }
-            for original, tint in swatches.get(brief.strategy.palette, {}).items():
-                fallback = fallback.replace(original, tint)
-            fallback_bytes = fallback.encode('utf-8')
-            (assets_dir / 'hero-visual.svg').write_bytes(fallback_bytes)
-            rendered_assets.append(SiteAsset(
-                key='hero-visual', asset_type='illustration', source_type='generated',
-                source_url=None, discovered_from=None, business_identity_match=True,
-                rights_status='generated', approval_status='approved_for_publish', alt_text='',
-                width=1200, height=900, mime_type='image/svg+xml', byte_size=len(fallback_bytes),
-                local_file='assets/hero-visual.svg', checksum=hashlib.sha256(fallback_bytes).hexdigest(),
-                notes='Authored decorative fallback; not a photograph of the business.',
-            ))
         model = WebsiteContentModel.from_brief(brief)
         (directory / 'index.html').write_text(render_html(brief, tuple(rendered_assets), model), encoding='utf-8')
         (directory / 'styles.css').write_text(render_css(), encoding='utf-8')
@@ -359,6 +342,8 @@ class SiteGenerationService:
             'preview_kind': 'internal_draft', 'indexing_policy': 'noindex,nofollow,noarchive',
             'missing_information': list(brief.missing_information), 'generated_files': list(GENERATED_FILES),
             'assets': [asset.to_dict() for asset in rendered_assets],
+            'visual_mode': 'photography' if any(a.asset_type == 'photo' for a in rendered_assets) else 'typography',
+            'outreach_image_context': stock_outreach_context(tuple(rendered_assets)),
         }
         (directory / 'site-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         (directory / 'README.md').write_text(
@@ -439,8 +424,3 @@ class PersistedSiteGenerationWorkflow:
             assets=assets, asset_source_root=source_root, after_install=commit_status,
         )
         return result, updated
-
-
-_HERO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" role="img">
-<defs><linearGradient id="a" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d8ece5"/><stop offset="1" stop-color="#f1dfc5"/></linearGradient><filter id="b"><feGaussianBlur stdDeviation="28"/></filter></defs>
-<rect width="1200" height="900" fill="url(#a)"/><circle cx="930" cy="210" r="245" fill="#fff" opacity=".58"/><circle cx="250" cy="720" r="310" fill="#2f7869" opacity=".18" filter="url(#b)"/><path d="M170 535c185-250 369-276 552-79 110 118 219 131 327 39v276H170z" fill="#fff" opacity=".72"/><path d="M650 166c76 65 116 155 120 269-102-49-204-47-307 5 18-123 80-214 187-274z" fill="#2f7869" opacity=".72"/></svg>"""

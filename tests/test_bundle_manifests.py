@@ -214,3 +214,17 @@ def test_openclaw_stdio_path_reaches_launcher_and_cpanel_status(tmp_path: Path) 
         "configured": True,
         "root_domain": "preview.example.test",
     }
+
+
+def test_launcher_recovers_only_the_configured_stock_key_without_printing_it(tmp_path):
+    service_env = tmp_path / '.openclaw' / 'service-env' / 'ai.openclaw.gateway.env'
+    service_env.parent.mkdir(parents=True)
+    service_env.write_text("PEXELS_API_KEY='synthetic-private-stock-key'\nUNRELATED_PRIVATE_VALUE='hidden'\n")
+    probe = tmp_path / 'probe-python'
+    probe.write_text('#!/bin/sh\n[ "$PEXELS_API_KEY" = "synthetic-private-stock-key" ] || exit 9\n'
+                     '[ -z "${UNRELATED_PRIVATE_VALUE:-}" ] || exit 10\nprintf "stock key present\\n"\n')
+    probe.chmod(0o700)
+    result = subprocess.run([str(ROOT / 'bin' / 'business-prospector-mcp'), '--check'], cwd=ROOT,
+        env={'HOME':str(tmp_path), 'PATH':os.environ.get('PATH',''), 'BUSINESS_PROSPECTOR_PYTHON':str(probe)},
+        check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == 'stock key present' and 'synthetic-private' not in result.stdout + result.stderr

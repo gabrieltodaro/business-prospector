@@ -1,0 +1,404 @@
+[
+  {
+    "business": {
+      "name": "Clínica Horizonte Demo | Odontologia, Prevenção e Atendimento em Vila Exemplo",
+      "category": "dentist",
+      "city": "Vila Exemplo, SP",
+      "rating": 4.8,
+      "review_count": 120,
+      "website_url": null,
+      "external_place_id": "synthetic-dental",
+      "address": "Rua da Demonstração, 100",
+      "phone": "+55 11 0000-0000",
+      "source": "synthetic_fixture",
+      "maps_url": "https://maps.google.com/?q=local-ficticio"
+    },
+    "research": {
+      "status": "complete",
+      "benchmark_market": "São Paulo, SP",
+      "benchmarks": [
+        {
+          "name": "Referência sintética 1",
+          "category": "dentist",
+          "website_url": "https://dentist-ref-0.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "dentist-ref-0",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "services",
+            "location",
+            "appointments",
+            "gallery"
+          ]
+        },
+        {
+          "name": "Referência sintética 2",
+          "category": "dentist",
+          "website_url": "https://dentist-ref-1.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "dentist-ref-1",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "services",
+            "location",
+            "appointments",
+            "gallery"
+          ]
+        }
+      ],
+      "common_features": [
+        {
+          "feature": "services",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "location",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "appointments",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "gallery",
+          "observed_in": 2,
+          "total": 2
+        }
+      ],
+      "inferences": [
+        "A informação mais procurada deve ter prioridade no conteúdo."
+      ],
+      "recommendations": [
+        "Usar conteúdo próprio e verificado com navegação clara."
+      ],
+      "design_priorities": [
+        "services"
+      ],
+      "confidence": "high",
+      "failure_reason": null
+    },
+    "reviewed_content": {
+      "reviewed_by": "Offline synthetic fixture reviewer",
+      "reviewed_at": "2026-11-06T12:00:00+00:00",
+      "sources": [
+        {
+          "id": "synthetic-brief",
+          "kind": "business_provided",
+          "reference": "Entirely synthetic demonstration brief; not a real business or credential."
+        }
+      ],
+      "facts": {
+        "services": {
+          "value": [
+            "Avaliação odontológica",
+            "Acompanhamento preventivo",
+            "Orientação de higiene bucal"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "booking_url": {
+          "value": "https://booking.example/dental-demo",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        }
+      }
+    },
+    "stock_photo": {
+      "provider": "pexels",
+      "photo_id": "7800563",
+      "source_page": "https://www.pexels.com/photo/7800563/",
+      "download_url": "https://images.pexels.com/photos/7800563/pexels-photo-7800563.jpeg?auto=compress&cs=tinysrgb&w=1200",
+      "photographer": "Nadezhda Moryak",
+      "photographer_url": "https://www.pexels.com/@nadezhda-moryak/",
+      "license_url": "https://www.pexels.com/license/",
+      "width": 4000,
+      "height": 6000,
+      "description": "Dental instruments on a blue surface"
+    }
+  },
+  {
+    "business": {
+      "name": "Mesa de Oliva Demo",
+      "category": "restaurant",
+      "city": "Vila Exemplo, SP",
+      "rating": 4.8,
+      "review_count": 120,
+      "website_url": null,
+      "external_place_id": "synthetic-restaurant",
+      "address": "Rua da Demonstração, 200",
+      "phone": "+55 11 0000-0000",
+      "source": "synthetic_fixture",
+      "maps_url": "https://maps.google.com/?q=local-ficticio"
+    },
+    "research": {
+      "status": "complete",
+      "benchmark_market": "São Paulo, SP",
+      "benchmarks": [
+        {
+          "name": "Referência sintética 1",
+          "category": "restaurant",
+          "website_url": "https://restaurant-ref-0.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "restaurant-ref-0",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "menu",
+            "opening_hours",
+            "location",
+            "reservations"
+          ]
+        },
+        {
+          "name": "Referência sintética 2",
+          "category": "restaurant",
+          "website_url": "https://restaurant-ref-1.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "restaurant-ref-1",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "menu",
+            "opening_hours",
+            "location",
+            "reservations"
+          ]
+        }
+      ],
+      "common_features": [
+        {
+          "feature": "menu",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "opening_hours",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "location",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "reservations",
+          "observed_in": 2,
+          "total": 2
+        }
+      ],
+      "inferences": [
+        "A informação mais procurada deve ter prioridade no conteúdo."
+      ],
+      "recommendations": [
+        "Usar conteúdo próprio e verificado com navegação clara."
+      ],
+      "design_priorities": [
+        "menu"
+      ],
+      "confidence": "high",
+      "failure_reason": null
+    },
+    "reviewed_content": {
+      "reviewed_by": "Offline synthetic fixture reviewer",
+      "reviewed_at": "2026-11-06T12:00:00+00:00",
+      "sources": [
+        {
+          "id": "synthetic-brief",
+          "kind": "business_provided",
+          "reference": "Entirely synthetic demonstration brief; not a real business or credential."
+        }
+      ],
+      "facts": {
+        "menu": {
+          "value": [
+            "Massa com tomates & manjericão",
+            "Risoto de cogumelos",
+            "Salada da estação",
+            "Torta de limão"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "booking_url": {
+          "value": "https://booking.example/restaurant-demo",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "opening_hours": {
+          "value": [
+            "Terça a domingo · 12h–22h"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        }
+      }
+    },
+    "stock_photo": {
+      "provider": "pexels",
+      "photo_id": "1279330",
+      "source_page": "https://www.pexels.com/photo/1279330/",
+      "download_url": "https://images.pexels.com/photos/1279330/pexels-photo-1279330.jpeg?auto=compress&cs=tinysrgb&w=1600",
+      "photographer": "Lisa Fotios",
+      "photographer_url": "https://www.pexels.com/@fotios-photos/",
+      "license_url": "https://www.pexels.com/license/",
+      "width": 6000,
+      "height": 4000,
+      "description": "Pasta with tomatoes and basil"
+    }
+  },
+  {
+    "business": {
+      "name": "Ateliê Aurora Demo",
+      "category": "beauty_salon",
+      "city": "Vila Exemplo, SP",
+      "rating": 4.8,
+      "review_count": 120,
+      "website_url": null,
+      "external_place_id": "synthetic-salon",
+      "address": "Rua dos Exemplos, 32",
+      "phone": "+55 11 0000-0000",
+      "source": "synthetic_fixture",
+      "maps_url": "https://maps.google.com/?q=local-ficticio"
+    },
+    "research": {
+      "status": "complete",
+      "benchmark_market": "São Paulo, SP",
+      "benchmarks": [
+        {
+          "name": "Referência sintética 1",
+          "category": "beauty_salon",
+          "website_url": "https://beauty-salon-ref-0.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "beauty_salon-ref-0",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "services",
+            "about",
+            "location",
+            "booking"
+          ]
+        },
+        {
+          "name": "Referência sintética 2",
+          "category": "beauty_salon",
+          "website_url": "https://beauty-salon-ref-1.example",
+          "rating": 4.9,
+          "review_count": 500,
+          "external_place_id": "beauty_salon-ref-1",
+          "facts": [
+            "Observação sintética de organização de conteúdo; nenhum site externo foi consultado."
+          ],
+          "features": [
+            "services",
+            "about",
+            "location",
+            "booking"
+          ]
+        }
+      ],
+      "common_features": [
+        {
+          "feature": "services",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "about",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "location",
+          "observed_in": 2,
+          "total": 2
+        },
+        {
+          "feature": "booking",
+          "observed_in": 2,
+          "total": 2
+        }
+      ],
+      "inferences": [
+        "A informação mais procurada deve ter prioridade no conteúdo."
+      ],
+      "recommendations": [
+        "Usar conteúdo próprio e verificado com navegação clara."
+      ],
+      "design_priorities": [
+        "services"
+      ],
+      "confidence": "high",
+      "failure_reason": null
+    },
+    "reviewed_content": {
+      "reviewed_by": "Offline synthetic fixture reviewer",
+      "reviewed_at": "2026-11-06T12:00:00+00:00",
+      "sources": [
+        {
+          "id": "synthetic-brief",
+          "kind": "business_provided",
+          "reference": "Entirely synthetic demonstration brief; not a real business or credential."
+        }
+      ],
+      "facts": {
+        "services": {
+          "value": [
+            "Corte & finalização",
+            "Coloração",
+            "Tratamentos capilares"
+          ],
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "biography": {
+          "value": "Um ateliê fictício dedicado à expressão pessoal. Este exemplo apresenta serviços e canais de contato para demonstrar uma experiência digital de salão.",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        },
+        "booking_url": {
+          "value": "https://booking.example/salon-demo",
+          "source_ids": [
+            "synthetic-brief"
+          ]
+        }
+      }
+    },
+    "stock_photo": {
+      "provider": "pexels",
+      "photo_id": "3993460",
+      "source_page": "https://www.pexels.com/photo/3993460/",
+      "download_url": "https://images.pexels.com/photos/3993460/pexels-photo-3993460.jpeg?auto=compress&cs=tinysrgb&w=1600",
+      "photographer": "cottonbro studio",
+      "photographer_url": "https://www.pexels.com/@cottonbro/",
+      "license_url": "https://www.pexels.com/license/",
+      "width": 3882,
+      "height": 5823,
+      "description": "Hair stylist holding scissors in salon"
+    }
+  }
+]

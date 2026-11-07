@@ -452,6 +452,47 @@ def revise_first_website_draft(
         return _response("revise_first_website_draft", error=str(exc))
 
 
+def _stock_service():
+    from business_prospector.application.stock_photography import StockPhotographyService
+    from business_prospector.infrastructure.pexels import PexelsStockPhotoProvider
+    key = os.environ.get("PEXELS_API_KEY", "")
+    provider = PexelsStockPhotoProvider(key, _data_dir() / "stock-cache") if key else None
+    return StockPhotographyService(_repository(), provider, _data_dir())
+
+
+@mcp.tool()
+def search_stock_photos(lead_id: int, reviewed_content: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Find category/research-matched illustrative stock candidates; never approve or generate automatically.
+
+    Display the returned Pexels and photographer attribution links while reviewing candidates.
+    Missing configuration, unavailable providers and unsuitable results use typography fallback.
+    """
+    from business_prospector.infrastructure.pexels import StockProviderUnavailable
+    try:
+        return _response("search_stock_photos", _stock_service().search(lead_id, reviewed_content))
+    except StockProviderUnavailable:
+        return _response("search_stock_photos", {"status": "unavailable", "photos": [], "fallback": "minimal_typography"})
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("search_stock_photos", error=str(exc))
+
+
+@mcp.tool()
+def approve_stock_photo_for_draft(lead_id: int, selection_id: str, photo_id: str,
+                                  reviewed_by: str, review_confirmed: bool = False) -> dict[str, Any]:
+    """Download one selected photo after explicit relevance, license and illustrative-use review.
+
+    Confirm no misleading depiction/endorsement, logos or unsuitable identifiable people.
+    Returns a reviewed asset key for generate/revise_first_website_draft(asset_keys=[...]).
+    This grants draft use only; commercial approval and publication remain separate operations.
+    """
+    try:
+        asset = _stock_service().approve_for_draft(lead_id, selection_id, photo_id,
+            reviewed_by=reviewed_by, review_confirmed=review_confirmed)
+        return _response("approve_stock_photo_for_draft", {"asset": asset.to_dict(), "asset_key": asset.key})
+    except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
+        return _response("approve_stock_photo_for_draft", error=str(exc))
+
+
 @mcp.tool()
 def validate_site_asset_candidates(
     lead: dict[str, Any], candidates: list[dict[str, Any]],

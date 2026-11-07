@@ -87,7 +87,7 @@ def test_dry_run_validates_internal_artifact_without_provider_write(tmp_path: Pa
     assert output["deployment_purpose"] == "technical_test"
     assert output["fqdn"] == "drlaura.gapps.test"
     assert output["document_root"] == "public_html/sales-previews/drlaura"
-    assert set(output["files"]) == {"index.html", "styles.css", "assets/hero-visual.svg"}
+    assert set(output["files"]) == {"index.html", "styles.css"}
     assert output["executed"] is False and output["would_write"] is True
     assert output["lead_status_changed"] is False
     assert output["commercial_approval_changed"] is False

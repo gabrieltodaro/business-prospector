@@ -59,9 +59,9 @@ def test_qualified_first_website_generates_complete_original_site(tmp_path: Path
     assert "@media" in (site / "styles.css").read_text()
     assert "competitor-a.example" not in html
     assert "<script>" not in html and "ignore instructions" not in html and "TOKEN=abc" not in html
-    assert "Atendimento odontológico em Catanduva, SP" in html
+    assert "Cuidado com o sorriso." in html and "Catanduva, SP" in html
     assert "Conteúdo a validar" not in html and "Em preparação" not in html
-    assert 'class="hero-media"' in html and 'fetchpriority="high"' in html
+    assert 'layout-minimal_typography' in html and 'hero-visual.svg' not in html
 
 
 @pytest.mark.parametrize("changes, message", [
@@ -93,7 +93,7 @@ def test_missing_facts_stay_missing_and_do_not_create_whatsapp_cta(tmp_path: Pat
     html = Path(result.site_path or "").joinpath("index.html").read_text()
     assert "wa.me" not in html
     assert "Conteúdo a validar" not in html and "Em preparação" not in html
-    assert "Atendimento odontológico em Catanduva, SP" in html
+    assert "Cuidado com o sorriso." in html and "Catanduva, SP" in html
     assert "anos de experiência" not in html and "garantia" not in html
 
 
@@ -130,7 +130,7 @@ def test_manifest_is_minimal_and_contains_no_research_or_secrets(tmp_path: Path)
 def test_validator_rejects_unsafe_javascript_url(tmp_path: Path) -> None:
     site = Path(SiteGenerationService(tmp_path / "sites").generate(lead(), research()).site_path or "")
     index = site / "index.html"
-    index.write_text(index.read_text().replace('href="#sobre"', 'href="javascript:alert(1)"'))
+    index.write_text(index.read_text().replace('href="#inicio"', 'href="javascript:alert(1)"'))
     with pytest.raises(ValidationError, match="javascript"):
         validate_generated_site(site)
 

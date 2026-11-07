@@ -158,7 +158,7 @@ def test_unapproved_asset_is_not_rendered_or_hotlinked(tmp_path: Path) -> None:
     )
     html = Path(result.site_path or "").joinpath("index.html").read_text()
     assert candidate.source_url not in html
-    assert 'src="assets/hero-visual.svg"' in html
+    assert '<img' not in html and 'layout-minimal_typography' in html
 
 
 def test_visual_copy_uses_facts_without_invented_claims(tmp_path: Path) -> None:

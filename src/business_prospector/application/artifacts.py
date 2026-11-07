@@ -119,6 +119,7 @@ class PublicArtifact:
 
     def write_to(self, destination: Path) -> None:
         destination.mkdir(parents=True)
+        (destination / "assets").mkdir()
         for item in self.files:
             file = destination / item.path
             file.parent.mkdir(parents=True, exist_ok=True)
@@ -137,13 +138,16 @@ def capture_artifact(site_path: Path) -> PublicArtifact:
     except (ValueError, UnicodeError) as exc:
         raise ValidationError("invalid artifact manifest") from exc
     assets = manifest.get("assets") if isinstance(manifest, dict) else None
-    if not isinstance(assets, list) or not assets:
+    if not isinstance(assets, list) or (not assets and manifest.get("visual_mode") != "typography"):
         raise ValidationError("explicit asset inventory is required")
     inventory: dict[str, dict[str, Any]] = {}
     keys: set[str] = set()
     for asset in assets:
         if not isinstance(asset, dict) or not isinstance(asset.get("key"), str) or not asset["key"]:
             raise ValidationError("invalid asset inventory entry")
+        if asset.get("source_type") == "licensed_stock":
+            from business_prospector.domain.site_assets import SiteAsset
+            SiteAsset.from_manifest(asset)
         relative = _relative(asset.get("local_file"))
         if not relative.startswith("assets/") or Path(relative).suffix.lower() not in _MIMES:
             raise ValidationError("unsafe public asset file type or path")

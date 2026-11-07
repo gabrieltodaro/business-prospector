@@ -26,6 +26,7 @@ def isolated_runtime(tmp_path, monkeypatch):
         "BUSINESS_PROSPECTOR_PREVIEW_BASE_DIR": "public_html/previews",
     }.items():
         monkeypatch.setenv(name, value)
+    monkeypatch.delenv("PEXELS_API_KEY", raising=False)
     original = socket.socket.connect
 
     def connect(sock, address):

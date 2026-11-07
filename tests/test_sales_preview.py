@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,15 @@ def generated_artifact(tmp_path: Path, stored: Lead) -> tuple[SiteDraftService, 
         rating=stored.rating, review_count=stored.review_count,
         external_place_id=stored.external_place_id, opportunity_type="first_website",
     )
-    result = SiteGenerationService(tmp_path / "sites").generate(raw, research())
+    from business_prospector.domain.site_assets import SiteAsset
+    source = tmp_path / 'fixture-assets'
+    (source / 'assets').mkdir(parents=True, exist_ok=True)
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#eee"/></svg>'
+    (source / 'assets' / 'fixture.svg').write_bytes(svg)
+    asset = SiteAsset('fixture', 'illustration', 'generated', None, None, True, 'generated',
+                      'approved_for_publish', '', 100, 100, 'image/svg+xml', len(svg),
+                      'assets/fixture.svg', hashlib.sha256(svg).hexdigest())
+    result = SiteGenerationService(tmp_path / "sites").generate(raw, research(), assets=(asset,), asset_source_root=source)
     site = Path(result.site_path or "")
     manifest_path = site / "site-manifest.json"
     manifest = json.loads(manifest_path.read_text())

@@ -7,6 +7,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from .exceptions import ValidationError
 from .normalization import slugify
+from .stock_photography import StockProvenance
 
 ASSET_TYPES = {"photo", "logo", "icon", "illustration"}
 SOURCE_TYPES = {
@@ -45,6 +46,7 @@ class SiteAsset:
     local_file: str | None = None
     checksum: str | None = None
     notes: str | None = None
+    stock: StockProvenance | None = None
 
     @classmethod
     def from_observation(cls, payload: dict[str, Any]) -> "SiteAsset":
@@ -97,6 +99,10 @@ class SiteAsset:
             raise ValidationError("reviewed asset requires local_file and SHA-256")
         if asset.mime_type is None or asset.byte_size is None:
             raise ValidationError("reviewed asset requires MIME and byte size")
+        if asset.source_type == "licensed_stock":
+            asset = replace(asset, stock=StockProvenance.from_dict(payload.get("stock")))
+            if asset.asset_type != "photo" or asset.business_identity_match:
+                raise ValidationError("stock imagery must be an illustrative photo, not business identity")
         return asset.with_local_file(local_file, checksum, asset.mime_type, asset.byte_size)
 
     def classified(self, *, rights_status: str, approval_status: str) -> "SiteAsset":
@@ -118,6 +124,7 @@ class SiteAsset:
             "alt_text": self.alt_text, "width": self.width, "height": self.height,
             "mime_type": self.mime_type, "byte_size": self.byte_size,
             "local_file": self.local_file, "checksum": self.checksum, "notes": self.notes,
+            "stock": self.stock.to_dict() if self.stock else None,
         }
 
 

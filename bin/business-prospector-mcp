@@ -36,6 +36,7 @@ recover_service_value() {
 
 if [ -r "$OPENCLAW_GATEWAY_ENV" ]; then
   for service_name in \
+    PEXELS_API_KEY \
     BUSINESS_PROSPECTOR_CPANEL_BASE_URL \
     BUSINESS_PROSPECTOR_CPANEL_USERNAME \
     BUSINESS_PROSPECTOR_CPANEL_API_TOKEN \

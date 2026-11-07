@@ -41,11 +41,17 @@ POLICIES = {
     "restaurant": CategoryPolicy("restaurant", ("menu", "hours", "location", "about", "differentiators", "gallery", "reputation", "faq"),
                                  ("menu", "hours", "location", "about", "reputation"), "terracotta",
                                  "Facilitar a consulta ao cardápio, aos horários e aos canais de contato disponíveis."),
+    "beauty_salon": CategoryPolicy("beauty_salon", ("services", "gallery", "about", "differentiators", "hours", "location", "reputation", "faq"),
+                                  ("services", "about", "location", "reputation"), "rose",
+                                  "Facilitar a escolha de serviços verificados e o contato com o salão."),
+    "fitness": CategoryPolicy("fitness", ("services", "about", "hours", "location", "gallery", "reputation", "faq"),
+                             ("services", "location", "reputation"), "slate",
+                             "Apresentar modalidades verificadas e canais de contato."),
     "generic": CategoryPolicy("generic", ("services", "about", "hours", "location", "team", "credentials", "differentiators", "faq", "reputation", "gallery"),
                               ("services", "about", "location", "reputation"), "slate",
                               "Apresentar somente informações verificadas e canais públicos de contato."),
 }
-ALIASES = {"dentista": "dentist", "dental_clinic": "dentist", "restaurante": "restaurant", "cafe": "restaurant", "café": "restaurant"}
+ALIASES = {"dentista": "dentist", "dental_clinic": "dentist", "restaurante": "restaurant", "cafe": "restaurant", "café": "restaurant", "salão de beleza": "beauty_salon", "salao de beleza": "beauty_salon", "beauty salon": "beauty_salon", "hair_salon": "beauty_salon", "academia": "fitness", "gym": "fitness", "fitness_studio": "fitness"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +93,7 @@ class WebsiteStrategy:
 
 def derive_strategy(
     lead: dict[str, Any], report: FirstWebsiteMarketReport,
-    content: ReviewedBusinessContent, image_count: int = 0,
+    content: ReviewedBusinessContent, image_count: int = 0, hero_aspect_ratio: float | None = None,
 ) -> WebsiteStrategy:
     # Reparse even typed reports so a manually constructed object cannot invent frequencies.
     report = FirstWebsiteMarketReport.from_dict(report.to_dict())
@@ -102,7 +108,7 @@ def derive_strategy(
     decisions: list[StrategyDecision] = []
     available = {
         "services": bool(content.values("services")), "menu": bool(content.values("menu")),
-        "hours": bool(content.values("opening_hours")), "about": True,
+        "hours": bool(content.values("opening_hours")), "about": bool(content.values("biography")),
         "team": bool(content.values("team")), "credentials": bool(content.values("credentials")),
         "differentiators": bool(content.values("differentiators")), "faq": bool(content.values("faq")),
         "location": bool(lead.get("address") or lead.get("maps_url")),
@@ -131,7 +137,6 @@ def derive_strategy(
             f"Supported patterns determine emphasis; {policy.name} policy supplies the tie-break order. Only target facts are rendered.",
             features, evidence + target_evidence))
     ordered = tuple(sorted(scores, key=lambda key: (-scores[key], policy.sections.index(key))))
-    sections = ("hero", *ordered, "contact")
     if content.values("ordering_url") and "ordering" in observed and policy.name == "restaurant":
         contact, label = "ordering", "Consultar pedidos"
     elif content.values("booking_url") and any(feature in observed for feature in ("booking", "appointments", "reservations")):
@@ -144,23 +149,33 @@ def derive_strategy(
         contact, label = "public_location", "Ver localização"
     else:
         contact, label = "on_page", "Ver informações"
+    closing = ("contact",) if contact != "on_page" or lead.get("instagram") else ()
+    sections = ("hero", *ordered, *closing)
     contact_features = tuple(feature for feature in observed if FEATURE_SECTIONS[feature] == "contact")
     decisions.append(StrategyDecision("cta", contact,
         "Use an observed booking/ordering pattern only with its reviewed URL; otherwise choose a confirmed available contact channel.",
         contact_features, tuple(item for feature in contact_features for item in observed[feature]) +
         tuple(f"business.sources:{item}" for item in content.provenance("booking_url", "ordering_url")) + (f"lead:{contact}",)))
     palette = next(iter(content.values("palette")), policy.palette)
-    typography = next(iter(content.values("typography")), "editorial")
-    composition = "editorial" if ordered and (ordered[0] in {"menu", "gallery", "differentiators"}
-                                                   or ordered[0] == "about" and content.values("biography")) else "focused"
+    typography = next(iter(content.values("typography")), "modern" if policy.name == "fitness" else "display" if policy.name == "restaurant" else "editorial")
+    if not image_count:
+        composition = "minimal_typography"
+    elif "gallery" in priorities or "photos" in priorities:
+        composition = "image_led"
+    elif policy.name == "restaurant" and "menu" in scores and (hero_aspect_ratio is None or hero_aspect_ratio >= 1.2):
+        composition = "full_width_photography"
+    elif policy.name == "beauty_salon" or "differentiators" in priorities:
+        composition = "asymmetric_photography"
+    else:
+        composition = "editorial_split"
     decisions.extend((
         StrategyDecision("palette", palette, "Reviewed palette selection." if content.values("palette") else f"Original {policy.name} demonstration palette; not inferred official branding.", evidence=content.provenance("palette")),
         StrategyDecision("typography", typography, "Reviewed typography selection." if content.values("typography") else "Local system serif/sans pair; no external font requests.", evidence=content.provenance("typography")),
-        StrategyDecision("hero", composition, f"Composition follows the leading section ({ordered[0] if ordered else 'contact'}); original layout, never a benchmark design copy."),
+        StrategyDecision("hero", composition, f"Composition follows available imagery ({image_count}), category ({policy.name}) and observed priorities ({",".join(report.design_priorities)}); original layout, never a benchmark design copy."),
         StrategyDecision("navigation", ",".join(ordered), "Navigation follows rendered content hierarchy, with all destinations reachable on mobile."),
         StrategyDecision("disclosure", "independent_demo_noindex", "Every generated page identifies the independent demonstration and requests no indexing."),
     ))
     return WebsiteStrategy(policy.guidance, label, sections, "Somente reputação pública e fatos do negócio",
                            contact, ("Navegação acessível", "Contato visível", "Leitura sem rolagem horizontal"),
                            ("Orientação de categoria não comprova serviços ou credenciais do negócio.",),
-                           policy.name, palette, typography, composition, (*ordered, "contact"), tuple(decisions))
+                           policy.name, palette, typography, composition, (*ordered, *closing), tuple(decisions))

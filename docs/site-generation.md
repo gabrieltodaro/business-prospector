@@ -2,6 +2,8 @@
 
 O gerador cria um rascunho estático para revisão interna a partir de um lead `first_website` qualificado e de pesquisa de mercado completa e validada. Ele não consulta SQLite de produção, Google ou Playwright; não publica, envia mensagem nem cria proposta.
 
+A versão atual é o [engine premium 4.0](premium-generation.md), com composição baseada em evidência, fotografia stock revisada e fallback tipográfico. Os contratos e limites de publicação descritos abaixo continuam válidos.
+
 ## Arquitetura e entradas
 
 `FirstWebsiteSiteBrief` mantém fatos do alvo, pesquisa validada, conteúdo revisado, estratégia e informações ausentes. A versão 3 transforma observações e prioridades respaldadas por evidências em estratégia determinística, modelo de conteúdo e componentes HTML/CSS. Policies pequenas para dentistas, restaurantes e categoria genérica escolhem seções e hierarquia sem inventar fatos. Consulte o [relatório de Phase 2](phase-2-implementation.md) para contratos, exemplos, testes e compatibilidade.
@@ -56,7 +58,7 @@ Os benchmarks informam padrões de mercado, mas seus textos, HTML, domínios, im
 
 ## Qualidade visual e assets
 
-A estratégia visual 3.0 compõe serviços/cardápio, biografia, equipe/credenciais, horários, FAQ, galeria, reputação, localização e contato somente quando justificados por fatos e pesquisa. Três paletas originais, duas composições de hero e tipografia local tornam a escolha visual determinística e explicável. Na ausência de fotografia aprovada, uma ilustração decorativa local e authored mantém o draft visualmente completo; pendências ficam no README, manifesto e warnings, não em grandes placeholders visíveis.
+A estratégia visual 3.0 compõe serviços/cardápio, biografia, equipe/credenciais, horários, FAQ, galeria, reputação, localização e contato somente quando justificados por fatos e pesquisa. Três paletas originais, duas composições de hero e tipografia local tornam a escolha visual determinística e explicável. Na ausência de fotografia aprovada, uma composição tipográfica mantém o draft visualmente completo; pendências ficam no README, manifesto e warnings, não em grandes placeholders visíveis.
 
 `SiteAsset` separa três decisões:
 

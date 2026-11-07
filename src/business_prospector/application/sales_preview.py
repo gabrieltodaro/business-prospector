@@ -130,7 +130,7 @@ class SalesPreviewLifecycleService:
             if "@media" not in css or not manifest.get("strategy_version"):
                 blockers.append("responsive generation metadata is missing")
             assets = manifest.get("assets")
-            if not isinstance(assets, list) or not assets:
+            if not isinstance(assets, list) or (not assets and manifest.get("visual_mode") != "typography"):
                 blockers.append("manifest must contain rendered assets")
                 assets = []
             not_approved: list[str] = []

@@ -10,7 +10,7 @@ from .normalization import slugify
 from .site_content import ReviewedBusinessContent
 from .site_strategy import WebsiteStrategy, derive_strategy
 
-SITE_STRATEGY_VERSION = "3.0"
+SITE_STRATEGY_VERSION = "4.0"
 
 
 def _optional_text(value: Any, field: str, maximum: int = 500) -> str | None:
@@ -49,7 +49,7 @@ class FirstWebsiteSiteBrief:
     def from_inputs(
         cls, lead: dict[str, Any], research: dict[str, Any], *,
         reviewed_content: dict[str, Any] | None = None, image_count: int = 0,
-        allow_revision: bool = False,
+        allow_revision: bool = False, hero_aspect_ratio: float | None = None,
     ) -> "FirstWebsiteSiteBrief":
         if not isinstance(lead, dict):
             raise ValidationError("lead must be an object")
@@ -92,7 +92,7 @@ class FirstWebsiteSiteBrief:
             ("instagram", instagram), ("maps_url", maps_url), ("services_or_treatments", content.values("services") or content.values("menu") or None),
             ("professional_biography", content.values("biography") or None), ("opening_hours", content.values("opening_hours") or None),
         ) if value is None)
-        strategy = derive_strategy(lead, report, content, image_count)
+        strategy = derive_strategy(lead, report, content, image_count, hero_aspect_ratio)
         return cls(
             slug, name, category, city, address, phone, whatsapp, confirmed, instagram, maps_url,
             float(rating), reviews, "first_website", lead["status"],
