@@ -147,7 +147,7 @@ def test_schema_v1_migrates_without_losing_leads(tmp_path: Path) -> None:
     assert updated.name == original.name
     assert updated.status == "proposal"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(leads)")}
     assert "ix_leads_name_city" in indexes
 
@@ -214,7 +214,7 @@ def test_schema_v4_adds_site_ready_without_mutating_existing_statuses(tmp_path: 
     updated = migrated.update(original.id or 0, {"status": "site_ready"})
     assert updated.status == "site_ready"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
 
 
 def test_schema_v5_preserves_legacy_site_ready_and_adds_lifecycle_statuses(tmp_path: Path) -> None:
@@ -240,7 +240,7 @@ def test_schema_v5_preserves_legacy_site_ready_and_adds_lifecycle_statuses(tmp_p
     assert migrated.update(original.id or 0, {"status": "internal_website"}).status == "internal_website"
     assert migrated.update(original.id or 0, {"status": "sales_preview"}).status == "sales_preview"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
 
 
 def test_legacy_competitor_research_rows_load_as_benchmarks_without_migration(

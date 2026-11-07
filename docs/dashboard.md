@@ -116,7 +116,7 @@ revisor. Em falha, o frontend preserva o estado e mostra razões determinística
 
 ## Publicação no dashboard
 
-O payload de cada lead inclui uma projection local e allowlisted do manifesto com stage,
+O payload de cada lead inclui uma projection local e allowlisted do SQLite/manifesto com stage,
 aprovação, slug, URL, deployment, timestamps, último SSL conhecido e contagem de arquivos.
 Listar cards nunca chama cPanel e nunca expõe paths, checksums, credenciais ou o manifesto
 integral.
@@ -132,13 +132,11 @@ token, domínio, slug, document root e paths são derivados pelo backend de conf
 metadata confiáveis. A operação reutiliza `SalesPreviewDeploymentService` e
 `HostGatorPreviewDeploymentProvider`; sucesso mantém o lead em `sales_preview`.
 
-**Check Deployment Status** é uma consulta read-only acionada pelo operador. Não existe
-polling, background check ou N chamadas ao carregar o board. O resultado seguro mostra
-domínio, document root, arquivos, URL e SSL. A UI apresenta:
-
-- `Published — HTTPS ready` para SSL `active`;
-- `Published — SSL pending` para `pending`;
-- `Published — SSL unknown` para `unknown`.
+**Verify Public Preview** verifica inventário remoto, DNS, TLS e bytes públicos aprovados,
+registrando o resultado localmente. Não existe polling nem chamadas de hosting ao carregar
+o board. A UI mostra `Published — HTTPS verified` somente após verificação bem-sucedida;
+falhas mostram o estado e a ação corretiva. O GET de status consulta apenas o histórico
+persistido. Detalhes e recuperação estão no [runbook cPanel](cpanel-deployment.md).
 
 ## Seguranca
 
@@ -189,3 +187,14 @@ Nenhum banco e movido entre os caminhos automaticamente.
 ## Revisões personalizadas (Phase 2)
 
 O MCP `revise_first_website_draft` revisa drafts existentes sem voltar à qualificação. A revisão bem-sucedida retorna a Internal Website e exige nova aprovação comercial; preview publicado não pode ser substituído. O dashboard continua usando as mesmas rotas de preview/readiness/aprovação, e o payload de `site_draft` inclui estratégia, número/identidade da revisão e `preview_kind`. Não foi adicionado editor ou CMS. Consulte [contratos e compatibilidade](phase-2-implementation.md).
+
+## Phase 3: verified deployment
+
+The dashboard reads deployment state from the same SQLite v8 database as MCP. It shows
+verification time and corrective actions, and exposes a public link only for a currently
+verified preview. Upload success is not publication. `GET /api/leads/<id>/deployment-status`
+now reads persisted history without contacting hosting. **Verify Public Preview** uses
+`POST /api/leads/<id>/verify-deployment` with `{}`; it performs remote reads and stores local
+verification evidence. **Publish Preview** still requires explicit confirmation and delegates
+to the shared deployment service. Failures preserve the commercial lead status. See
+[deployment and recovery](cpanel-deployment.md) for states, retries and rollout requirements.

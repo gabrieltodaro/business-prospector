@@ -93,8 +93,7 @@ O dashboard detecta artefatos existentes sem alterar leads. `site_ready` legado 
 A aprovacao inclui `sales_preview.approved_artifact`: versao, checksum agregado e
 inventario exato de paths, SHA-256 e tamanhos. Alterar HTML, CSS, imagens ou o
 conjunto de arquivos bloqueia publicacao ate nova revisao. Previews antigos sem
-essa identidade exigem aprovacao explicita novamente. Um Sales Preview ainda nao
-publicado pode ser reaprovado; substituicao de preview ja publicado continua bloqueada.
+essa identidade exigem aprovacao explicita novamente. Um Sales Preview sem reserva de deployment pode ser reaprovado; substituicao de preview ja publicado continua bloqueada.
 
 `PreviewDeploymentProvider` mantém hosting fora da aplicação. O primeiro adapter é o [HostGator/cPanel UAPI](cpanel-deployment.md), configurado apenas por secrets do runtime. Ele não publica automaticamente ao aprovar, não implementa DNS e não usa FTP, senha cPanel, SSH ou Cloudflare.
 
@@ -102,10 +101,12 @@ publicado pode ser reaprovado; substituicao de preview ja publicado continua blo
 
 - TODO: conjuntos reutilizáveis de benchmarks com TTL/cache.
 - TODO: interface de revisão de assets; a biblioteca local por lead já está integrada.
-- TODO: verificação pública controlada do provider existente após autorização separada.
+- Phase 3 implementa verificação pública DNS/HTTPS/HTTP com providers offline para testes; validação real HostGator requer autorização separada.
 - TODO: proposta a partir de site aprovado.
 - TODO: outreach somente com autorização explícita de Gabriel.
 - TODO: aquisição opcional de assets com proveniência e direitos verificados.
 - TODO: refinamento de conteúdo aprovado pelo cliente após interesse/contrato.
 
 Referências normativas: [pathlib](https://docs.python.org/3/library/pathlib.html), [html.parser](https://docs.python.org/3/library/html.parser.html), [http.server](https://docs.python.org/3/library/http.server.html), [MDN HTML](https://developer.mozilla.org/docs/Web/HTML), [MDN CSS](https://developer.mozilla.org/docs/Web/CSS) e [WCAG](https://www.w3.org/WAI/standards-guidelines/wcag/).
+
+Phase 3 bloqueia revisão/reaprovação de artefatos com destino reservado, inclusive após falhas ou interrupções. Resolva o deployment existente pelo [fluxo de recuperação](cpanel-deployment.md); não regenere os bytes aprovados para contornar uma falha remota.

@@ -275,7 +275,7 @@ def test_version_six_upgrade_adds_only_receipt_storage(boundary):
     assert reopened.get(stored.id).to_dict() == before
     assert reopened.get_benchmark_selection('missing') is None
     with sqlite3.connect(boundary.database_path) as connection:
-        assert connection.execute('PRAGMA user_version').fetchone()[0] == 7
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == 8
 
 
 def test_old_boolean_only_provider_cannot_write_qualified(boundary):

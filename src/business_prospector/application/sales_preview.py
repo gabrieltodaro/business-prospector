@@ -229,6 +229,8 @@ class SalesPreviewLifecycleService:
             raise ValidationError("invalid deployment metadata")
         if isinstance(deployment, dict) and deployment.get("deployment_status") == "published":
             raise ValidationError("published preview cannot be replaced or reapproved")
+        if self._repository.get_deployment(lead_id) is not None:
+            raise ValidationError('deployment is reserved; published or interrupted previews cannot be reapproved')
         manifest_keys = {item["key"] for item in manifest["assets"]}
         unknown = keys - manifest_keys
         if unknown:

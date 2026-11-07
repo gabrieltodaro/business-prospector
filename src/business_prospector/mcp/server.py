@@ -497,14 +497,34 @@ def cpanel_connection_test() -> dict[str, Any]:
 
 @mcp.tool()
 def sales_preview_deployment_status(lead_id: int) -> dict[str, Any]:
-    """Read deployment state through the configured provider; never accepts infrastructure settings."""
+    """Read persisted deployment state and attempt history; no hosting or public network requests."""
     try:
         return _response(
-            "sales_preview_deployment_status", _deployment_service().status(lead_id).to_dict(),
+            "sales_preview_deployment_status", SalesPreviewDeploymentService(
+                _repository(), SiteDraftService(_sites_root()),
+            ).status(lead_id).to_dict(),
         )
     except (ProspectorError, CPanelError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         LOGGER.warning("sales preview deployment status failed: %s", exc)
         return _response("sales_preview_deployment_status", error=str(exc))
+
+
+@mcp.tool()
+def sales_preview_deployment_readiness(lead_id: int) -> dict[str, Any]:
+    """Check exact approval and configured destination locally; does not authorize publication."""
+    try:
+        return _response('sales_preview_deployment_readiness', _deployment_service().readiness(lead_id))
+    except (ProspectorError, ValueError, OSError, sqlite3.Error):
+        return _response('sales_preview_deployment_readiness', error='deployment readiness unavailable; check runtime configuration')
+
+
+@mcp.tool()
+def verify_sales_preview_deployment(lead_id: int) -> dict[str, Any]:
+    """Verify existing remote inventory, DNS, TLS and approved public bytes; persists results, never uploads."""
+    try:
+        return _response('verify_sales_preview_deployment', _deployment_service().verify(lead_id).to_dict())
+    except (ProspectorError, ValueError, OSError, sqlite3.Error):
+        return _response('verify_sales_preview_deployment', error='verification unavailable; inspect readiness and deployment status')
 
 
 @mcp.tool()

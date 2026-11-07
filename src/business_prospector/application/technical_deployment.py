@@ -13,11 +13,7 @@ from business_prospector.application.site_generation import SiteDraftService
 from business_prospector.domain.exceptions import ValidationError
 
 
-@dataclass(frozen=True, slots=True)
-class TechnicalDeploymentTarget:
-    preview_slug: str
-    fqdn: str
-    document_root: str
+from business_prospector.domain.deployment import DeploymentTarget as TechnicalDeploymentTarget
 
 
 class TechnicalDeploymentProvider(Protocol):

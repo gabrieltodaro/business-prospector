@@ -130,6 +130,7 @@ function openDetail(lead) {
       ['Approved at',deployment.approved_at],['Approved by',deployment.approved_by],
       ['Deployment',deploymentLabel(deployment,remote)],
       ['Published at',deployment.published_at],['Files uploaded',deployment.files_uploaded],
+      ['Last verification',deployment.last_verified_at],['Required action',deployment.corrective_action],
       ['Preview URL',externalLink(deployment.preview_url,'Open Published Preview')],
       ['Remote domain',remote.domain_configured===undefined?'—':remote.domain_configured?'Configured':'Not configured'],
       ['Remote document root',remote.document_root_matches===undefined?'—':remote.document_root_matches?'Matches':'Mismatch'],
@@ -145,8 +146,8 @@ function openDetail(lead) {
       const publish=node('button','approve-preview publish-preview','Publish Preview');
       publish.addEventListener('click',()=>publishSalesPreview(lead));website.append(publish);
     }
-    if(deployment.deployment_status==='published'){
-      const check=node('button','approve-preview check-deployment','Check Deployment Status');
+    if(deployment.deployment_status){
+      const check=node('button','approve-preview check-deployment','Verify Public Preview');
       check.addEventListener('click',()=>checkDeploymentStatus(lead));website.append(check);
     }
   }
@@ -172,25 +173,25 @@ function websiteStageLabel(deployment){
   return 'Internal Website';
 }
 function deploymentLabel(deployment,remote={}){
-  if(deployment.deployment_status!=='published')return 'Not published';
-  const ssl=remote.ssl_status||deployment.last_known_ssl_status;
-  if(ssl==='active')return 'Published — HTTPS ready';
-  if(ssl==='pending')return 'Published — SSL pending';
-  return 'Published — SSL unknown';
+  const status=remote.deployment_status||deployment.deployment_status;
+  return status==='published'?'Published — HTTPS verified':status||'Not published';
 }
 async function publishSalesPreview(lead){
   const message='This will publish the approved Sales Preview. It will not contact the prospect.';
   if(!window.confirm(message))return;
   try{
-    await request(`/api/leads/${lead.id}/publish-sales-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({explicitly_authorized:true})});
-    closeDetail();await load();showToast('Sales Preview published; lead remains Sales Preview');
+    const result=await request(`/api/leads/${lead.id}/publish-sales-preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({explicitly_authorized:true})});
+    closeDetail();await load();showToast(result.deployment.deployment_status==='published'?'Public preview verified':'Deployment: '+result.deployment.deployment_status);
   }catch(error){showToast(error.message,true)}
 }
 async function checkDeploymentStatus(lead){
   try{
-    const body=await request(`/api/leads/${lead.id}/deployment-status`);
-    lead.remote_deployment_status=body.deployment_status;
-    openDetail(lead);showToast('Deployment status updated');
+    const body=await request(`/api/leads/${lead.id}/verify-deployment`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    lead.remote_deployment_status=body.deployment;
+    showToast(body.deployment.corrective_action||body.deployment.deployment_status);
+    await load();
+    const refreshed=leads.find(item=>item.id===lead.id);
+    if(refreshed){refreshed.remote_deployment_status=body.deployment;openDetail(refreshed);}
   }catch(error){showToast(error.message,true)}
 }
 function closeDetail(){el('inspector').classList.remove('open');el('inspector').setAttribute('aria-hidden','true');el('scrim').hidden=true}

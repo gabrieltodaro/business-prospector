@@ -35,6 +35,7 @@ def test_projection_distinguishes_internal_approved_and_published_without_provid
     })
     manifest["deployment"] = {
         "deployment_status": "published",
+        "verification": {"state": "published"},
         "preview_url": "https://drlaura.gapps.test",
         "deployment_mode": "direct_first_publish",
         "published_at": "2026-08-25T12:00:00+00:00",
@@ -60,6 +61,8 @@ def test_projection_distinguishes_internal_approved_and_published_without_provid
         "published_at": "2026-08-25T12:00:00+00:00",
         "last_known_ssl_status": "pending",
         "files_uploaded": 3,
+        "last_verified_at": None,
+        "corrective_action": None,
     }
     serialized = json.dumps(published)
     assert "secret-checksum" not in serialized

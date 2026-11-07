@@ -97,7 +97,10 @@ def create_draft(application: DashboardApplication) -> tuple[Lead, Path]:
     return stored, site
 
 
-class FakeDashboardDeploymentProvider:
+from test_cpanel_deployment import FakeProvider
+
+
+class FakeDashboardDeploymentProvider(FakeProvider):
     def __init__(self, *, ssl_status: str = "pending", fail_publish: bool = False) -> None:
         self.ssl_status = ssl_status
         self.fail_publish = fail_publish
@@ -258,14 +261,14 @@ def test_dashboard_publish_reuses_service_and_preserves_sales_preview(
     assert lead.status == "sales_preview"
     assert projection["website_stage"] == "published_sales_preview"
     assert projection["preview_url"] == result["preview_url"]
-    assert projection["last_known_ssl_status"] == ssl_status
+    assert projection["last_known_ssl_status"] == "active"  # Public TLS verification supersedes cPanel metadata.
 
 
 def test_dashboard_publish_failure_preserves_sales_preview(tmp_path: Path) -> None:
     provider = FakeDashboardDeploymentProvider(fail_publish=True)
     application, stored, _ = approved_dashboard(tmp_path, provider)
-    with pytest.raises(CPanelError, match="safe fake deployment failure"):
-        application.publish_sales_preview(stored.id or 0, {"explicitly_authorized": True})
+    result = application.publish_sales_preview(stored.id or 0, {"explicitly_authorized": True})
+    assert result["deployment_status"] == "unknown_remote_state"
     assert application.get_lead(stored.id or 0).status == "sales_preview"
 
 
@@ -277,9 +280,9 @@ def test_deployment_status_is_only_called_by_explicit_action_and_is_read_only(tm
     assert provider.status_calls == 0
     status = application.deployment_status(stored.id or 0)
     after = application.get_lead(stored.id or 0)
-    assert provider.status_calls == 1
+    assert provider.status_calls == 0
     assert status["ssl_status"] == "active"
-    assert status["domain_configured"] is True
+    assert status["verification"]["dns_status"] == "verified"
     assert after == before
 
 
@@ -454,10 +457,9 @@ def test_frontend_uses_safe_dom_and_status_only_requests() -> None:
     assert "publish-sales-preview" in source
     assert "explicitly_authorized:true" in source
     assert "This will publish the approved Sales Preview. It will not contact the prospect." in source
-    assert "Check Deployment Status" in source
-    assert "deployment-status" in source
-    assert "Published — SSL pending" in source
-    assert "Published — HTTPS ready" in source
+    assert "Verify Public Preview" in source
+    assert "verify-deployment" in source
+    assert "Published — HTTPS verified" in source
     assert "readiness.blocking_reasons" in source
     assert "website_deployment" in source
     assert "published_sales_preview" in source

@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 from business_prospector.application.site_generation import SiteDraftService
 from business_prospector.domain.models import Lead
+from business_prospector.domain.deployment import DEPLOYMENT_STATES, CORRECTIVE_ACTIONS
+from business_prospector.application.ports import LeadRepository
 
 
 _PREVIEW_SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$")
@@ -26,6 +28,8 @@ class WebsiteDeploymentProjection:
     published_at: str | None
     last_known_ssl_status: str | None
     files_uploaded: int | None
+    last_verified_at: str | None = None
+    corrective_action: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,14 +44,17 @@ class WebsiteDeploymentProjection:
             "published_at": self.published_at,
             "last_known_ssl_status": self.last_known_ssl_status,
             "files_uploaded": self.files_uploaded,
+            "last_verified_at": self.last_verified_at,
+            "corrective_action": self.corrective_action,
         }
 
 
 class WebsiteDeploymentProjectionService:
     """Build a safe local read model without contacting the deployment provider."""
 
-    def __init__(self, drafts: SiteDraftService) -> None:
+    def __init__(self, drafts: SiteDraftService, repository: LeadRepository | None = None) -> None:
         self._drafts = drafts
+        self._repository = repository
 
     def project(self, lead: Lead) -> WebsiteDeploymentProjection:
         info = self._drafts.inspect(lead.slug or "")
@@ -64,10 +71,17 @@ class WebsiteDeploymentProjectionService:
         preview = preview if isinstance(preview, dict) else {}
         deployment = deployment if isinstance(deployment, dict) else {}
 
+        if self._repository is not None and lead.id is not None:
+            record = self._repository.get_deployment(lead.id)
+            if record:
+                deployment = {**deployment, **record['details'], 'deployment_status': record['state']}
+
         approval_status = _safe_choice(
             preview.get("preview_status"), {"approved_not_published", "published"},
         )
-        deployment_status = _safe_choice(deployment.get("deployment_status"), {"published"})
+        deployment_status = _safe_choice(deployment.get("deployment_status"), DEPLOYMENT_STATES)
+        if deployment_status == "published" and not (isinstance(deployment.get("verification"), dict) and deployment["verification"].get("state") == "published"):
+            deployment_status = "uploaded"
         if deployment_status == "published":
             stage = "published_sales_preview"
         elif approval_status in {"approved_not_published", "published"}:
@@ -80,6 +94,8 @@ class WebsiteDeploymentProjectionService:
         preview_url = _safe_public_url(
             deployment.get("preview_url") or preview.get("preview_url")
         )
+        if deployment_status != "published":
+            preview_url = None
         files_uploaded = deployment.get("files_uploaded")
         safe_file_count = (
             files_uploaded
@@ -99,6 +115,8 @@ class WebsiteDeploymentProjectionService:
             _safe_text(deployment.get("published_at"), 64),
             _safe_choice(deployment.get("ssl_status"), {"active", "pending", "unknown"}),
             safe_file_count,
+            _safe_text(deployment.get("verification", {}).get("checked_at"), 64) if isinstance(deployment.get("verification"), dict) else None,
+            CORRECTIVE_ACTIONS.get(deployment_status),
         )
 
 

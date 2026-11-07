@@ -1,304 +1,202 @@
-# Sales Preview deployment with cPanel UAPI
+# Verified Sales Preview deployment with cPanel UAPI
 
-## Boundary and lifecycle
-
-Publishing is an explicit operation after approval:
+## Lifecycle and authority
 
 ```text
-Internal Website
-  -> human approval
-Sales Preview
-  -> explicit publish authorization
-SalesPreviewDeploymentService
-  -> PreviewDeploymentProvider
-HostGatorPreviewDeploymentProvider
-  -> CPanelUapiClient
-  -> cPanel UAPI over HTTPS
+Internal Website -> explicit content/asset approval -> Sales Preview
+  -> explicit publication authorization
+  -> approved -> deploying -> uploaded -> verifying -> published
 ```
 
-Publication does not change the lead status to `contacted`. `sales_preview` remains the
-commercial lifecycle stage; deployment state is stored separately in the private local
-site manifest. No deployment metadata or credential is stored in SQLite.
+`published` means that remote inventory and public DNS, HTTPS and exact approved bytes
+passed verification. Upload success, HTTP 200 and cPanel's installed-certificate list
+alone never establish publication. The lead's commercial status remains `sales_preview`.
+No operation contacts a prospect or changes a customer domain.
 
-## Approved revision and public inventory
+`SalesPreviewDeploymentService` owns eligibility, snapshots, destination reservations,
+state transitions and recovery. `HostGatorPreviewDeploymentProvider` owns cPanel operations
+and remote inspection. `PublicPreviewVerifier` accepts injectable DNS/HTTPS ports;
+production adapters use Python's resolver, certificate-verifying SSL context and pinned
+HTTPS connections. Domain state/recovery policy contains no cPanel logic.
 
-Commercial publication rechecks readiness and the exact approved file hashes immediately
-before calling the provider. It passes a private temporary snapshot of the approved bytes.
-The cPanel adapter captures and validates all upload bytes before its first remote request;
-it never rereads an editable draft between individual uploads.
+Publication requires the persisted lead, matching identity, content review acknowledgment,
+asset publication rights and exact Phase 1 `approved_artifact` identity. Changed bytes,
+missing files, unexpected files, traversal and local symlinks fail before hosting requests.
+The provider receives an isolated snapshot; only `index.html`, `styles.css` and explicitly
+listed passive image assets are uploaded. Manifests, research, README, databases and
+credentials are excluded. Existing inventory limits remain 100 files, 25 MiB total and
+8 MiB per image.
 
-The explicit inventory is `index.html`, `styles.css`, and the manifest's `assets[].local_file`
-entries. Only PNG, JPEG, WebP and restricted passive SVG are accepted as assets, with
-matching MIME, signatures and SHA-256. SVG declarations, scripts, event handlers and
-external resources are rejected. The inventory rejects duplicate entries, symlinks,
-traversal, unexpected files/directories and unsafe file types. Private README and manifest
-files are never uploaded. Limits remain 100 public files, 25 MiB total and 8 MiB per image.
+## Configuration and destination policy
 
-Old manifests without an explicit valid inventory must be regenerated or corrected and
-reviewed. Previously approved but unpublished previews require explicit reapproval to
-record their artifact identity. Reapproval of a published preview is unsupported; existing
-published previews may still be inspected, but a publish call without current integrity
-metadata fails closed. Approval does not cause publication.
-
-## Technical deployment test
-
-A technical deployment test is deliberately distinct from commercial publication:
+Required runtime settings remain:
 
 ```text
-Internal Website
-  -> explicit technical smoke authorization
-  -> infrastructure validated
-Internal Website remains unchanged
-  -> design/content work continues
-  -> human approval
-Sales Preview
-  -> commercial publish
-  -> outreach only in a later explicit operation
-```
-
-The administrative CLI locates an existing artifact only through the controlled plugin
-data `sites/` root. It accepts a safe site slug, never an arbitrary path. It reuses
-`SiteDraftService`, public artifact validation and `HostGatorPreviewDeploymentProvider`.
-It does not read SQLite, update lead status, approve content/assets, or write commercial
-deployment metadata to `site-manifest.json`.
-
-Dry-run is the default and makes no cPanel request:
-
-```bash
-python -m business_prospector.cpanel_smoke \
-  --site-slug <controlled-site-slug> \
-  --preview-slug drlaura \
-  --dry-run
-```
-
-Real execution requires both independent gates; omission or mismatch performs no write:
-
-```bash
-python -m business_prospector.cpanel_smoke \
-  --site-slug <controlled-site-slug> \
-  --preview-slug drlaura \
-  --execute \
-  --confirm drlaura
-```
-
-Read-only provider status needs no lead or artifact:
-
-```bash
-python -m business_prospector.cpanel_smoke --preview-slug drlaura --status
-```
-
-Every result is marked `deployment_purpose=technical_test` and
-`cleanup=manual_required`. A technical-test URL must not be shared with a prospect. The
-first test domain and directory must be removed or updated manually while infrastructure
-validation is underway; automatic deletion remains unsupported.
-
-## Official operations
-
-The current cPanel catalog documents these UAPI v3 operations:
-
-- `GET /execute/DomainInfo/domains_data?format=list` reads domain hosting configuration;
-- `GET /execute/SubDomain/addsubdomain` creates the preview subdomain;
-- `POST /execute/Fileman/upload_files` uploads multipart files;
-- `GET /execute/Fileman/list_files` checks directory contents;
-- `GET /execute/SSL/installed_hosts` reports installed certificate coverage.
-
-The current Fileman UAPI catalog also contains `autocompletedir`, `empty_trash`,
-`get_file_content`, `get_file_information`, `save_file_content`, and `transcode`.
-It does **not** contain `rename_file` or `delete_file`. The historical API 2
-`Fileman::fileop` is intentionally not used, and no shell operation is used.
-
-The previously supplied `Domains/add_domain` documentation URL is not present in the
-current official operation catalog. `SubDomain/addsubdomain` is used through the UAPI
-`/execute` endpoint and response envelope (`apiversion=3`), not through the deprecated
-cPanel API 2 invocation format.
-
-Normative references: [UAPI overview](https://api.docs.cpanel.net/openapi/cpanel/overview/),
-[API tokens](https://api.docs.cpanel.net/cpanel/tokens/),
-[create subdomain](https://api.docs.cpanel.net/specifications/cpanel.openapi/subdomain/subdomain-addsubdomain),
-[domain configuration](https://api.docs.cpanel.net/specifications/cpanel.openapi/domain-information/domaininfo-domains_data),
-[upload files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-upload_files),
-[list files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-list_files),
-[installed SSL hosts](https://api.docs.cpanel.net/specifications/cpanel.openapi/cpanel-account-ssl-management/ssl-installed_hosts).
-
-The standard cPanel documentation shows a UAPI v3 outer envelope containing
-`apiversion`, `module`, `func` and `result`. Some hosting environments or proxies have
-been observed returning that `result` object directly. `CPanelUapiClient` normalizes
-both the documented wrapped form and this credible flattened response variant at one
-transport boundary. A flattened object is accepted only when it contains both `status`
-and `data`; arbitrary JSON objects remain malformed. Application and domain code never
-depend on which transport response shape was received. This is compatibility with an
-observed hosting response variant, not a provider guarantee.
-
-`Fileman/list_files` data may be the observed list of entry objects or the older grouped
-`files`/`dirs` representation. The parser retains only each safe immediate `file` name and
-its `file`/`dir` type. Fields such as absolute paths, ownership IDs, permissions and other
-server metadata are discarded before status results are built.
-
-## Authentication and secrets
-
-Only cPanel API Token authentication is supported:
-
-```http
-Authorization: cpanel <username>:<api-token>
-```
-
-Required runtime variables:
-
-```text
-BUSINESS_PROSPECTOR_CPANEL_BASE_URL=https://cpanel-hostname.example:2083
-BUSINESS_PROSPECTOR_CPANEL_USERNAME=cpanel-account-user
-BUSINESS_PROSPECTOR_CPANEL_API_TOKEN=<secret>
-BUSINESS_PROSPECTOR_PREVIEW_ROOT_DOMAIN=gapps.tech
+BUSINESS_PROSPECTOR_CPANEL_BASE_URL=https://cpanel-host.example:2083
+BUSINESS_PROSPECTOR_CPANEL_USERNAME=account-user
+BUSINESS_PROSPECTOR_CPANEL_API_TOKEN=<runtime secret>
+BUSINESS_PROSPECTOR_PREVIEW_ROOT_DOMAIN=previews.example
 BUSINESS_PROSPECTOR_PREVIEW_BASE_DIR=public_html/sales-previews
 ```
 
-The token belongs only in OpenClaw's user-owned service environment. It must not be put
-in manifests, repository config, SQLite, site manifests, dashboard requests, logs or
-chat. `cpanel_status` returns only `configured` and `root_domain`; it performs no network
-request. The launcher recovers only the five allowlisted variables when OpenClaw 2026.7.1
-starts MCP with a sanitized environment.
+Optional `BUSINESS_PROSPECTOR_PREVIEW_EXPECTED_IPS` is a comma-separated list of permitted
+public IPv4/IPv6 addresses. When provided, every resolved address must belong to that set.
+The launcher recovers this optional setting alongside the five existing settings through
+the same allowlisted runtime mechanism. No dependency or registration change is required.
+Do not put secrets into repository config, tool arguments, chat or SQLite.
 
-## Domain and remote-path policy
+The configured root must be a domain controlled and authorized for demonstrations, never
+a customer production domain. The configured base must be a dedicated relative directory.
+Tools accept lead IDs, not arbitrary URLs, credentials or remote paths. Slugs derive only
+one child hostname and directory. The known lead website hostname and its use as the
+preview root are rejected. Configuration ownership remains an operator responsibility;
+the application cannot infer ownership of unrelated domains.
 
-The MCP accepts only a persisted lead id and an explicit authorization boolean. It never
-accepts a host, username, token, domain or remote path.
+Before mutation, `Fileman/get_file_information` checks the account home and each existing
+path component. Remote symlinks, non-directories, noncanonical paths and unexpected
+resolved paths fail closed. Absolute document roots must match the actual account home
+exactly; suffix matching is prohibited. Existing domains or destination entries block
+first publication. Database uniqueness reserves the URL and destination for one lead.
+A digest of the cPanel origin/account binds the reservation to its original runtime
+configuration without storing credentials. Token rotation does not change that identity.
 
-For preview slug `drlaura`, the provider derives:
+## Upload strategy and limitations
 
-```text
-FQDN:          drlaura.gapps.tech
-document root: public_html/sales-previews/drlaura
-```
+The supported UAPI operations provide no safe directory swap. This implementation retains
+`deployment_mode=direct_first_publish`: create the absent preview subdomain, upload assets
+and CSS with `overwrite=0`, then upload `index.html` last. Parent paths and filename absence
+are checked before each upload. UAPI creates missing upload directories.
 
-The slug must be lowercase ASCII letters/digits/hyphens, at most 32 characters. Remote
-paths are relative, normalized and confined below the configured base directory.
-Existing domains are idempotent only when their document root matches. A different root
-is a structured conflict and is never modified.
+This reduces partial-page exposure but **is not atomic activation**. Assets may already be
+public, and directory indexes/default hosting pages may be visible before the index upload.
+Do not share the URL until verification reports `published`. No remote temporary staging
+files are created; local snapshots and normal manifest-update temporaries are cleaned up.
+Manifest-update temporaries live outside the artifact inventory, so an interrupted write
+does not poison the approved file set.
 
-Creating a cPanel domain and provisioning public DNS are distinct responsibilities. If
-DNS is external, a future `DnsProvider` must manage the record or wildcard independently.
-This implementation contains no DNS, Cloudflare or registrar integration.
+UAPI does not offer an atomic no-follow filesystem operation across precheck and upload.
+It cannot prevent a hostile account process from swapping paths between requests. Operate
+in an exclusively managed preview directory and quiesce competing hosting writers. Atomic
+promotion, automated rollback, partial-file replacement and automatic deletion require a
+separately reviewed hosting capability; none is claimed here. Unpublish remains unsupported.
 
-## Public artifact and upload
+## Verification
 
-Before upload, Python revalidates the generated site and Sales Preview metadata. Every
-rendered asset must have `approval_status=approved_for_publish` and acceptable rights.
+Verification first checks the exact remote directory tree against the approved inventory.
+Missing files produce `partial_deployment`; extra files, links, destination drift or
+unreadable remote state fail closed. It then:
 
-Only these files are eligible:
+1. Resolves the authorized hostname, rejecting nonpublic/multicast addresses and checking
+   optional expected IPs. At most eight addresses are accepted.
+2. Connects directly to each resolved address, preserving the authorized hostname for SNI,
+   certificate hostname/trust validation and HTTP Host. No second DNS lookup, environment
+   proxy, insecure HTTP fallback or redirect following occurs.
+3. Requires HTTP 200 and the expected MIME type for `/`, `/index.html`, CSS and every asset.
+   Every response must equal the approved bytes. Hosting error pages, stale content,
+   unexpected redirects and transformed/minified content fail verification.
 
-```text
-index.html
-styles.css
-assets/** regular files
-```
+The public pass has a 30-second total budget, bounded reads and a socket deadline covering
+handshake, headers and body. One pass runs per invocation; there are no propagation sleeps
+or background retry loops. The system resolver has a bounded two-worker pool and caller
+timeouts; Python cannot cancel a libc DNS call already running. Stalled workers can cause
+later calls to return `dns_resolver_busy` until the OS resolver returns. cPanel requests
+have their own 20-second default timeout; the public budget starts after hosting inspection.
+Public verification checks all addresses/files, so unusually slow or large previews can
+need another explicit check. No DNS record changes or AutoSSL requests are made.
 
-The uploader rejects symlinks, traversal, more than 100 files and more than 25 MiB total.
-It does not upload `site-manifest.json`, `README.md`, SQLite, source files or secrets.
-Uploads use multipart UAPI requests with `overwrite=0` and permissions `0644`.
+## Persistence and recovery
 
-## First publish, idempotence and atomicity
+Schema **v8** adds `preview_deployments` and append-only `deployment_events`. Existing lead,
+assessment, research and benchmark rows are unchanged. A reservation references the lead
+and approved aggregate checksum; it does not duplicate the approval inventory. Each
+invocation records an attempt ID, state, sanitized progress and verification outcome.
+SQLite transactions protect reservations and state/event updates; POSIX site locks serialize
+operations on a draft. A private manifest projection remains for compatibility, but SQLite
+is authoritative after a deployment reservation exists.
 
-Initial publication uses the operations available in the current UAPI catalog:
+| State/outcome | Required action |
+| --- | --- |
+| `approved` | Explicit publication request can begin the first upload. |
+| `deploying`, `uploaded`, `verifying` after interruption | Retry or verify inspects remote state; it does not repeat an uncertain upload. |
+| `upload_failure` | Correct permissions/quota and reconcile the destination. |
+| `partial_deployment` | An operator must restore the exact missing approved files or explicitly clean up the failed destination. Automatic partial-file repair is unsupported. |
+| `dns_failure` | Correct DNS/wait for propagation externally, then verify again. |
+| `tls_failure` | Provision a trusted matching certificate externally, then verify again. |
+| `http_failure` | Correct hosting, MIME types or redirects, then verify again. |
+| `content_mismatch` | Investigate cache/transformation/tampering; never silently replace approval. |
+| `timeout`, `unknown_remote_state` | Reconcile remote state and repeat verification. |
+| `published` | Repeated publish returns the last verified receipt without uploads. Explicit verify performs a fresh check. |
 
-```text
-confirm public_html/sales-previews/<slug>/ is absent
-  -> ensure the subdomain points at that final root
-  -> upload each allowlisted file directly to the final root
-  -> validate each individual upload result
-```
+A retry can upload again only after a failed attempt and read-only checks establish that
+**both domain and destination entry are absent**, for example after separately authorized
+operator cleanup. The exact original approval/destination remains required. Existing partial
+files are never overwritten. Completed uploads with lost acknowledgments can be recovered
+through verification alone. A failed recheck changes current deployment state while retaining
+the historical publication guard. Draft revision/reapproval is blocked once a destination
+is reserved, including when the manifest projection failed. There is no tool to discard that
+reservation or bypass recovery by changing the approved artifact.
 
-This is `deployment_mode=direct_first_publish`, not an atomic promotion. If a final
-directory already exists, the provider returns `update_not_supported` and sends no
-files. An unchanged commercial artifact remains idempotent through its SHA-256 artifact
-identity in private local deployment metadata and does not call the provider again.
+The database, filesystem and hosting server are not one transaction. A crash after a durable
+state write is reconciled on retry; failures writing the compatibility manifest cannot erase
+the database receipt. Backups must cover both SQLite and artifacts. Independent databases
+or uncoordinated remote writers cannot share the same preview namespace safely.
 
-If an upload fails, the result is `partial_deployment`, includes only confirmed relative
-public filenames, states `rollback_performed=false`, and sets `cleanup=manual_required`.
-No automatic delete, rename, broad cleanup, or claimed rollback occurs. Safe atomic
-updates require a future SFTP/SSH or equivalent replacement mechanism.
+Legacy manifest-only `published` records are displayed as uploaded/unverified until a
+current approved artifact passes verification. They are never automatically uploaded again.
+They need a valid Phase 1 approval; missing approval requires operator reconciliation, not
+fabricated metadata. Existing leads are not automatically deployed or reapproved by migration.
 
-## SSL and commercial readiness
+## MCP and dashboard
 
-`SSL/installed_hosts` is read-only. If the FQDN is covered, `ssl_status=active`; otherwise
-the result is `pending` or `unknown`. Publication may therefore succeed while HTTPS is
-pending. Such a URL must not be sent to a prospect.
+| Tool | Effect |
+| --- | --- |
+| `get_sales_preview_readiness` | Existing content/asset review readiness. |
+| `approve_sales_preview` | Explicit human content/asset approval; no hosting access. |
+| `sales_preview_deployment_readiness(lead_id)` | Local approval, artifact, configured target and reservation checks. No remote availability claim. |
+| `publish_sales_preview(lead_id, explicitly_authorized)` | Controlled initial deployment or safe retry. Boolean must be exactly true. |
+| `sales_preview_deployment_status(lead_id)` | Persisted state, history and last verification; no hosting request or hosting credentials needed. |
+| `verify_sales_preview_deployment(lead_id)` | Reads hosting/public URLs and persists the result; never uploads. Also works after a published lead advances commercially. |
 
-The provider does not start AutoSSL. The current cPanel-user operation catalog includes
-AutoSSL status/actions, but certificate issuance also depends on DNS and provider policy.
-WHM is not required or used.
+A successful MCP envelope means the operation ran; callers must examine
+`data.deployment_status == "published"` before treating the URL as verified. Failure states
+include a corrective action. Verification writes local evidence and is not a read-only
+local operation. Repository construction can migrate SQLite; local status is not an
+operational read-only database audit.
 
-## Status and unpublish
+The existing dashboard shows persisted deployment state, verification time and corrective
+action. **Publish Preview** retains explicit confirmation. **Verify Public Preview** uses
+`POST /api/leads/<id>/verify-deployment` with `{}`; GET deployment status reads local history.
+Only currently verified previews receive a public link. Listing cards makes no hosting call.
 
-`sales_preview_deployment_status(lead_id)` reads:
+The administrative `python -m business_prospector.cpanel_smoke` retains dry-run by default
+and independent `--execute --confirm <slug>` gates. It reports upload/provider status, not
+commercial publication, does not approve a lead or persist a deployment, and must not be
+used to bypass the commercial workflow. Its technical-test cleanup remains manual.
 
-- domain presence and document root;
-- presence of `index.html` and `styles.css`;
-- installed SSL coverage.
+## Mac Mini rollout (separate authorization required)
 
-The technical `--status` command additionally reports whether a matching
-`.staging-<slug>-*` directory remains and exposes only allowlisted entries in the expected
-public root (`index.html`, `styles.css`, and `assets/`). It never exposes unrelated file or
-directory names. `document_root_present` independently reports whether the expected final
-directory exists.
+Follow [the update strategy](openclaw-update-strategy.md). Phase 3 development does not
+authorize operational changes. Confirm actual source/process ownership and the shared data
+path; quiesce application writers, make a consistent WAL-aware SQLite backup and preserve
+sites/private manifests. Rehearse v7→v8 and recovery on disposable copies before permitting
+repository construction against live data. Validate all existing lead rows/statuses and
+artifact hashes. No reset, reseed or automatic approval/deployment is needed.
 
-It does not perform a public HTTP GET and does not mutate local metadata.
+Restart only affected MCP/dashboard processes through supported scoped management and
+verify tool discovery. A new chat alone does not prove Python imports reloaded. Do not
+replace agent persona, memory or copied skills. No operational dependency installation is
+required solely for Phase 3. Any later rollback must coordinate code, database and artifacts;
+rolling back Git alone does not remove v8 deployment reservations safely.
 
-`unpublish` currently returns `unsupported` without a network call. Recursive UAPI deletion
-exists, but removing both domain configuration and content safely is not transactional.
-The conservative result is intentional.
+With separate hosting authorization, validate a synthetic throwaway approved preview:
+account-home response shape, ancestor/symlink metadata, strict listing, upload directory
+creation, DNS (including IPv6), certificate chain, MIME types, exact responses, retry and
+cleanup. HostGator behavior and account permissions remain **unvalidated live**.
 
-## Deployment metadata
+## Official references
 
-After success, the private local `site-manifest.json` receives:
-
-```json
-{
-  "deployment": {
-    "deployment_status": "published",
-    "deployment_id": "artifact checksum prefix",
-    "artifact_checksum": "sha256...",
-    "preview_url": "https://drlaura.gapps.tech",
-    "files_uploaded": 3,
-    "domain_status": "created",
-    "ssl_status": "pending",
-    "published_at": "...",
-    "last_checked_at": null,
-    "warnings": [],
-    "deployment_mode": "direct_first_publish",
-    "cleanup": "manual_required",
-    "uploaded_files": ["index.html", "styles.css", "assets/hero.svg"]
-  }
-}
-```
-
-No credential is persisted. The manifest itself is excluded from public upload.
-
-## Production checklist
-
-1. Review implementation and offline tests.
-2. In cPanel, open **Security → Manage API Tokens**.
-3. Create a dedicated token named for Business Prospector; use the shortest supported
-   expiration/least privilege compatible with the required UAPI functions.
-4. Copy it once into `~/.openclaw/service-env/ai.openclaw.gateway.env`; never put it in Git
-   or chat.
-5. Restrict that file to the account owner (`chmod 600`).
-6. Restart the OpenClaw Gateway and run `bin/business-prospector-mcp --check-cpanel-env`.
-7. Confirm `business-prospector__cpanel_status` reports configured without revealing the
-   token, username or hostname.
-8. First test with a throwaway approved lead/slug, never Laura.
-9. Confirm cPanel domain/document root, DNS, uploaded files and SSL independently.
-10. Revoke the token immediately if any secret exposure is suspected.
-
-## Future SSH/SFTP adapter
-
-SSH is not a dependency. After HostGator enables it, a future architecture may compose:
-
-```text
-HostGatorPreviewDeploymentProvider
-├── CPanelDomainManager
-└── SftpArtifactUploader
-```
-
-SFTP could provide efficient recursive transfer, controlled directory swaps, cleanup and
-rollback. It must remain behind the same provider boundary and use a dedicated key/secret
-boundary; FTP and cPanel passwords remain prohibited.
+- [cPanel UAPI overview](https://api.docs.cpanel.net/openapi/cpanel/overview/) and [API tokens](https://api.docs.cpanel.net/cpanel/tokens/).
+- [Create subdomain](https://api.docs.cpanel.net/specifications/cpanel.openapi/subdomain/subdomain-addsubdomain), [domain configuration](https://api.docs.cpanel.net/specifications/cpanel.openapi/domain-information/domaininfo-domains_data).
+- [Upload files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-upload_files), [list files](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-list_files), [file information](https://api.docs.cpanel.net/specifications/cpanel.openapi/manage-files/fileman-get_file_information).
+- [Python SSL contexts](https://docs.python.org/3.11/library/ssl.html#ssl.create_default_context), [HTTP client](https://docs.python.org/3.11/library/http.client.html), [SQLite backup](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup).
+- [SQLite transactions](https://sqlite.org/lang_transaction.html), [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools).

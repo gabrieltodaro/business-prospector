@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import ipaddress
+import hashlib
+import math
 import mimetypes
 import os
 import re
@@ -11,15 +14,19 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 from business_prospector.application.deployment import (
     DeploymentResult,
     DeploymentStatus,
     UnpublishResult,
 )
-from business_prospector.application.technical_deployment import TechnicalDeploymentTarget
-from business_prospector.application.artifacts import validated_artifact
+from business_prospector.domain.deployment import DeploymentTarget as TechnicalDeploymentTarget
+from business_prospector.application.artifacts import validated_artifact, PublicArtifact
+from business_prospector.application.preview_verification import PublicPreviewVerifier
+from business_prospector.domain.deployment import VerificationResult, CORRECTIVE_ACTIONS
+from business_prospector.infrastructure.preview_verification import SystemDnsResolver, PinnedHttpsReader
+from datetime import datetime, timezone
 from business_prospector.domain.exceptions import ProspectorError, ValidationError
 
 ENV_BASE_URL = "BUSINESS_PROSPECTOR_CPANEL_BASE_URL"
@@ -53,6 +60,7 @@ class CPanelDeploymentConfig:
     root_domain: str
     base_dir: str
     timeout_seconds: float = 20.0
+    expected_addresses: tuple[str, ...] = ()
 
     @classmethod
     def from_environment(
@@ -68,6 +76,7 @@ class CPanelDeploymentConfig:
         return cls(
             values[ENV_BASE_URL], values[ENV_USERNAME], values[ENV_TOKEN],
             values[ENV_ROOT_DOMAIN].casefold().rstrip("."), values[ENV_BASE_DIR],
+            expected_addresses=tuple(item.strip() for item in env.get("BUSINESS_PROSPECTOR_PREVIEW_EXPECTED_IPS", "").split(",") if item.strip()),
         ).validated()
 
     def validated(self) -> CPanelDeploymentConfig:
@@ -86,6 +95,15 @@ class CPanelDeploymentConfig:
         normalized = _safe_remote_path(self.base_dir)
         if normalized != self.base_dir.strip("/"):
             raise ValidationError("preview base directory must be a normalized relative path")
+        if len(PurePosixPath(normalized).parts) < 2:
+            raise ValidationError('preview base directory must be a dedicated subdirectory')
+        if not math.isfinite(self.timeout_seconds) or not 0 < self.timeout_seconds <= 60:
+            raise ValidationError('invalid cPanel timeout')
+        try:
+            if any(not ipaddress.ip_address(item).is_global or ipaddress.ip_address(item).is_multicast or '%' in item for item in self.expected_addresses):
+                raise ValueError
+        except ValueError:
+            raise ValidationError('expected preview IPs must be public IP addresses') from None
         return self
 
     def safe_status(self) -> dict[str, Any]:
@@ -130,13 +148,19 @@ class HttpTransport(Protocol):
     def send(self, request: HttpRequest) -> HttpResponse: ...
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req: Request, fp: Any, code: int, msg: str,
+                         headers: Any, newurl: str) -> None:
+        return None
+
+
 class UrllibHttpTransport:
     def send(self, request: HttpRequest) -> HttpResponse:
         try:
             raw = Request(
                 request.url, data=request.body, headers=dict(request.headers), method=request.method,
             )
-            with urlopen(raw, timeout=request.timeout) as response:
+            with build_opener(_NoRedirect()).open(raw, timeout=request.timeout) as response:
                 return HttpResponse(
                     int(response.status), response.read(), response.headers.get_content_type(),
                 )
@@ -186,8 +210,11 @@ class CPanelUapiClient:
 
     def list_files(self, directory: str) -> Any:
         return self._get("Fileman", "list_files", {
-            "dir": directory, "show_hidden": "1", "types": "file|dir|link",
+            "dir": directory, "show_hidden": "1",
         })
+
+    def file_information(self, path: str) -> Any:
+        return self._get('Fileman', 'get_file_information', {'path': path, 'show_hidden': '1'})
 
     def upload_files(self, directory: str, files: Sequence[UploadFile]) -> Any:
         if not files:
@@ -350,9 +377,13 @@ class DomainEnsureResult:
 
 
 class HostGatorPreviewDeploymentProvider:
-    def __init__(self, config: CPanelDeploymentConfig, client: CPanelUapiClient) -> None:
+    def __init__(self, config: CPanelDeploymentConfig, client: CPanelUapiClient,
+                 verifier: PublicPreviewVerifier | None = None) -> None:
         self._config = config.validated()
         self._client = client
+        self._verifier = verifier or PublicPreviewVerifier(SystemDnsResolver(), PinnedHttpsReader(),
+                                                          expected_addresses=config.expected_addresses)
+        self._home: str | None = None
 
     def publish(self, site_path: Path, preview_slug: str) -> DeploymentResult:
         target = self.target(preview_slug)
@@ -362,15 +393,19 @@ class HostGatorPreviewDeploymentProvider:
         deployment_id = checksum[:16]
         base_dir = _safe_remote_path(self._config.base_dir)
         final_dir = _safe_remote_path(f"{base_dir}/{slug}")
+        self._assert_safe_path(final_dir)
         if self._directory_exists(base_dir, slug):
             raise CPanelError(
                 "update_not_supported",
                 "preview directory already exists; safe replacement is not supported by UAPI",
             )
-        domain = self.ensure_subdomain(slug)
+        if self._find_domain(target.fqdn) is not None:
+            raise CPanelError('destination_conflict', 'existing preview domain requires operator reconciliation')
+        self._client.add_subdomain(slug, self._config.root_domain, final_dir)
+        domain = DomainEnsureResult("created", target.fqdn, final_dir)
         uploaded = 0
         uploaded_files: list[str] = []
-        for item in artifact.files:
+        for item in sorted(artifact.files, key=lambda item: (item.path == 'index.html', item.path)):
             relative = Path(item.path)
             remote_parent = final_dir
             if relative.parent != Path("."):
@@ -382,13 +417,15 @@ class HostGatorPreviewDeploymentProvider:
                 mimetypes.guess_type(relative.name)[0] or "application/octet-stream",
             )
             try:
+                self._assert_safe_path(remote_parent)
+                self._assert_absent_file(remote_parent, relative.name)
                 data = self._client.upload_files(remote_parent, [upload])
                 succeeded, failed = _upload_counts(data)
                 if failed or succeeded != 1:
                     raise CPanelError("upload_failed", "cPanel did not store the public file")
             except CPanelError as exc:
                 raise CPanelError(
-                    "partial_deployment",
+                    "upload_failed" if not uploaded_files and exc.code == "upload_failed" else "partial_deployment",
                     "direct first publish did not complete; manual cleanup is required",
                     safe_details={
                         "deployment_mode": "direct_first_publish",
@@ -408,17 +445,18 @@ class HostGatorPreviewDeploymentProvider:
             "HTTPS certificate is not active yet; do not send this URL to a prospect",
         )
         return DeploymentResult(
-            "published", slug, f"https://{slug}.{self._config.root_domain}", uploaded,
+            "uploaded", slug, f"https://{slug}.{self._config.root_domain}", uploaded,
             domain.status, ssl_status, deployment_id, checksum, warnings,
             "direct_first_publish", "manual_required", tuple(uploaded_files),
         )
 
     def ensure_subdomain(self, preview_slug: str) -> DomainEnsureResult:
         target = self.target(preview_slug)
+        self._assert_safe_path(target.document_root)
         existing = self._find_domain(target.fqdn)
         if existing is not None:
             actual = _domain_document_root(existing)
-            if not _document_roots_match(actual, target.document_root):
+            if not self._root_matches(actual, target.document_root):
                 raise CPanelError(
                     "document_root_conflict",
                     "preview domain exists with a different document root",
@@ -433,7 +471,7 @@ class HostGatorPreviewDeploymentProvider:
         target = self.target(preview_slug)
         domain = self._find_domain(target.fqdn)
         configured = domain is not None
-        root_matches = configured and _document_roots_match(
+        root_matches = configured and self._root_matches(
             _domain_document_root(domain or {}), target.document_root,
         )
         files_present = False
@@ -468,7 +506,7 @@ class HostGatorPreviewDeploymentProvider:
         ssl_status = self._ssl_status(target.fqdn)
         if ssl_status != "active":
             warnings.append("HTTPS certificate is not active")
-        state = "published" if configured and root_matches and files_present else "not_published"
+        state = "uploaded" if configured and root_matches and files_present else "not_published"
         return DeploymentStatus(
             state, target.preview_slug, f"https://{target.fqdn}",
             configured, bool(root_matches), files_present,
@@ -476,12 +514,111 @@ class HostGatorPreviewDeploymentProvider:
             document_root_present,
         )
 
+    def safe_to_retry(self, preview_slug: str) -> bool:
+        """Only a wholly absent destination permits a fresh non-overwriting attempt."""
+        target = self.target(preview_slug)
+        self._assert_safe_path(target.document_root)
+        return (self._find_domain(target.fqdn) is None
+                and not self._directory_exists(self._config.base_dir, preview_slug))
+
+    def verify(self, artifact: PublicArtifact, preview_slug: str) -> VerificationResult:
+        target = self.target(preview_slug)
+        try:
+            self._assert_safe_path(target.document_root)
+            domain = self._find_domain(target.fqdn)
+            if domain is None or not self._root_matches(_domain_document_root(domain), target.document_root):
+                raise CPanelError('unknown_remote_state', 'domain configuration does not match')
+            expected: dict[str, dict[str, str]] = {'': {}}
+            for item in artifact.files:
+                parts = PurePosixPath(item.path).parts
+                for index, name in enumerate(parts):
+                    parent = '/'.join(parts[:index])
+                    expected.setdefault(parent, {})[name] = 'file' if index == len(parts) - 1 else 'dir'
+            for relative, entries in expected.items():
+                directory = target.document_root + ('/' + relative if relative else '')
+                self._assert_safe_path(directory)
+                actual = self._strict_listing(directory)
+                if actual != entries:
+                    state = 'partial_deployment' if actual.items() <= entries.items() else 'unknown_remote_state'
+                    raise CPanelError(state, 'remote inventory differs from approved inventory')
+        except CPanelError as exc:
+            state = exc.code if exc.code in {'partial_deployment', 'timeout'} else 'unknown_remote_state'
+            return VerificationResult(state, datetime.now(timezone.utc).isoformat(),
+                                      error_code=state, corrective_action=CORRECTIVE_ACTIONS[state])
+        return self._verifier.verify('https://' + target.fqdn, artifact)
+
+    def _account_home(self) -> str:
+        if self._home is None:
+            info = self._client.file_information('.')
+            path = info.get('fullpath') if isinstance(info, dict) else None
+            if (not isinstance(path, str) or not path.startswith('/') or
+                    str(PurePosixPath(path)) != path or '..' in PurePosixPath(path).parts or
+                    info.get('type') != 'dir' or PurePosixPath(path).name != self._config.username):
+                raise CPanelError('unsafe_path', 'cannot establish account home directory')
+            self._home = path
+        return self._home
+
+    def _root_matches(self, actual: str, expected: str) -> bool:
+        if actual == expected:
+            return True
+        return actual == self._account_home() + '/' + expected
+
+    def _assert_safe_path(self, path: str) -> None:
+        safe = _safe_remote_path(path)
+        home = self._account_home()
+        for index in range(1, len(PurePosixPath(safe).parts) + 1):
+            prefix = '/'.join(PurePosixPath(safe).parts[:index])
+            try:
+                info = self._client.file_information(prefix)
+            except CPanelError as exc:
+                if exc.code == 'not_found':
+                    return
+                raise
+            if isinstance(info, dict) and info.get('type') not in {None, 'dir'}:
+                raise CPanelError('unsafe_path', 'remote path is not a directory')
+            if isinstance(info, dict) and info.get('exists') in {0, '0'}:
+                return
+            if (not isinstance(info, dict) or info.get('type') != 'dir'
+                    or info.get('fullpath') != home + '/' + prefix):
+                raise CPanelError('unsafe_path', 'remote path is not a regular confined directory')
+
+    def _strict_listing(self, directory: str) -> dict[str, str]:
+        data = self._client.list_files(directory)
+        if isinstance(data, dict):
+            files, dirs = data.get('files'), data.get('dirs')
+            if not isinstance(files, list) or not isinstance(dirs, list):
+                raise CPanelError('malformed_response', 'remote inventory is unavailable')
+            if any(not isinstance(item, dict) for item in files + dirs):
+                raise CPanelError('malformed_response', 'remote inventory entry is invalid')
+            data = [dict(item, type=item.get('type', 'file')) for item in files] + [
+                dict(item, type=item.get('type', 'dir')) for item in dirs]
+        if not isinstance(data, list):
+            raise CPanelError('malformed_response', 'remote inventory is unavailable')
+        result: dict[str, str] = {}
+        for item in data:
+            if (not isinstance(item, dict) or not _safe_filename(item.get('file'))
+                    or item.get('type') not in {'file', 'dir'} or item['file'] in result):
+                raise CPanelError('unsafe_path', 'unsafe remote inventory entry')
+            result[item['file']] = item['type']
+        return result
+
+    def _assert_absent_file(self, directory: str, filename: str) -> None:
+        try:
+            entries = self._strict_listing(directory)
+        except CPanelError as exc:
+            if exc.code == 'not_found':
+                return
+            raise
+        if filename in entries:
+            raise CPanelError('destination_conflict', 'refusing to overwrite an existing remote file')
+
     def target(self, preview_slug: str) -> TechnicalDeploymentTarget:
         slug = _safe_slug(preview_slug)
         return TechnicalDeploymentTarget(
             slug,
             f"{slug}.{self._config.root_domain}",
             _safe_remote_path(f"{self._config.base_dir}/{slug}"),
+            hashlib.sha256((self._config.base_url.rstrip("/") + "\0" + self._config.username).encode()).hexdigest(),
         )
 
     def unpublish(self, preview_slug: str) -> UnpublishResult:
@@ -493,7 +630,7 @@ class HostGatorPreviewDeploymentProvider:
 
     def _directory_exists(self, parent: str, name: str) -> bool:
         try:
-            return name in _listed_directory_names(self._client.list_files(parent))
+            return name in self._strict_listing(parent)
         except CPanelError as exc:
             if exc.code == "not_found":
                 return False
@@ -536,13 +673,13 @@ def _safe_remote_path(value: str) -> str:
     if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
         raise ValidationError("remote preview path is invalid")
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    if path.is_absolute() or str(path) != value or any(part in {"", ".", ".."} for part in path.parts) or any(ord(char) < 32 for char in value):
         raise ValidationError("remote preview path is invalid")
     return path.as_posix()
 
 
 def _safe_filename(value: str) -> bool:
-    return bool(value and value not in {".", ".."} and not any(
+    return bool(isinstance(value, str) and value and value not in {".", ".."} and not any(
         char in value for char in "/\\\r\n\x00,;"
     ))
 
@@ -686,12 +823,6 @@ def _domain_document_root(domain: Mapping[str, Any]) -> str:
     return str(
         domain.get("documentroot") or domain.get("document_root") or domain.get("docroot") or ""
     )
-
-
-def _document_roots_match(actual: str, expected: str) -> bool:
-    clean_actual = actual.rstrip("/")
-    clean_expected = expected.rstrip("/")
-    return clean_actual == clean_expected or clean_actual.endswith("/" + clean_expected)
 
 
 def _upload_counts(data: Any) -> tuple[int, int]:

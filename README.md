@@ -148,7 +148,7 @@ Pesos e filtros estao centralizados em `config/default.json` e serao calibrados 
 
 ## Fora do MVP ativo
 
-Redesign/criacao de website, envio de WhatsApp ou e-mail, propostas, contratos, financeiro, follow-ups, deploy, HostGator, Locaweb, Google Sheets e `leads.md`.
+Redesign automatizado, envio de WhatsApp ou e-mail, propostas, contratos, financeiro, follow-ups, Locaweb, Google Sheets e `leads.md`. Geração de primeiro site e preview aprovado com cPanel fazem parte do fluxo ativo documentado abaixo.
 
 ## Google Places
 
@@ -182,7 +182,7 @@ Após geração e validação bem-sucedidas, o pipeline move o lead para `intern
 
 O [dashboard](docs/dashboard.md) oferece **Ver Site** em `/sites/<slug>/`, restrito ao servidor local, mostra a prontidão calculada pelo Python e impede drag-and-drop de contornar a aprovação. Aprovação e publicação são ações humanas distintas: **Approve Sales Preview** registra metadata comercial; **Publish Preview** exige outra confirmação explícita e reutiliza o provider cPanel configurado. Nenhuma delas faz outreach ou marca o lead como contatado.
 
-A publicação controlada de Sales Preview possui agora um adapter [HostGator/cPanel UAPI](docs/cpanel-deployment.md). Ele usa exclusivamente HTTPS + API Token, transporte injetável e allowlist de artefatos; FTP e senha cPanel são proibidos. Publicação continua sendo uma ação humana separada, não altera o lead para Contatado e depende de configuração secreta do runtime. DNS não está implementado.
+A publicação controlada de Sales Preview possui agora um adapter [HostGator/cPanel UAPI](docs/cpanel-deployment.md). Ele usa exclusivamente HTTPS + API Token, transporte injetável e allowlist de artefatos; FTP e senha cPanel são proibidos. Publicação continua sendo uma ação humana separada, não altera o lead para Contatado e depende de configuração secreta do runtime. Phase 3 verifica DNS, TLS/HTTPS e os bytes públicos aprovados antes de registrar `published`; não altera DNS. SQLite v8 preserva leads e registra destinos, tentativas e resultados. Consulte [Phase 3](docs/phase-3-implementation.md) para validação e limites de recuperação.
 
 ## Seguranca
 

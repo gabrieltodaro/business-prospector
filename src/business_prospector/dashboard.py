@@ -65,11 +65,8 @@ class DashboardApplication:
             config=ProspectingConfig.from_resource(config_resource()),
         )
         self.sales_previews = SalesPreviewLifecycleService(repository, self.drafts)
-        self.website_projections = WebsiteDeploymentProjectionService(self.drafts)
-        self.deployments = (
-            SalesPreviewDeploymentService(repository, self.drafts, deployment_provider)
-            if deployment_provider is not None else None
-        )
+        self.website_projections = WebsiteDeploymentProjectionService(self.drafts, repository)
+        self.deployments = SalesPreviewDeploymentService(repository, self.drafts, deployment_provider)
 
     def list_leads(self, filters: dict[str, str]) -> list[Lead]:
         leads = self.repository.list(1000)
@@ -210,11 +207,16 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
         def do_POST(self) -> None:
             parsed = urlsplit(self.path)
             lead_id = self._approval_lead_id(parsed.path)
+            verify_lead_id = self._verify_lead_id(parsed.path)
             publish_lead_id = self._publish_lead_id(parsed.path)
-            if lead_id is None and publish_lead_id is None:
+            if lead_id is None and publish_lead_id is None and verify_lead_id is None:
                 return self._method_or_not_found(parsed.path, "GET")
             try:
                 payload = self._read_json()
+                if verify_lead_id is not None:
+                    if payload or application.deployments is None:
+                        raise ValidationError('verification requires configured deployment and an empty payload')
+                    return self._json(HTTPStatus.OK, {'deployment': application.deployments.verify(verify_lead_id).to_dict()})
                 if lead_id is not None:
                     approval = application.approve_sales_preview(lead_id, payload)
                     return self._json(HTTPStatus.OK, approval)
@@ -286,6 +288,16 @@ def create_handler(application: DashboardApplication, static_dir: Traversable) -
             if (
                 len(parts) == 4 and parts[:2] == ["api", "leads"] and
                 parts[2].isdigit() and parts[3] == "publish-sales-preview"
+            ):
+                return int(parts[2])
+            return None
+
+        @staticmethod
+        def _verify_lead_id(path: str) -> int | None:
+            parts = path.strip("/").split("/")
+            if (
+                len(parts) == 4 and parts[:2] == ["api", "leads"] and
+                parts[2].isdigit() and parts[3] == "verify-deployment"
             ):
                 return int(parts[2])
             return None

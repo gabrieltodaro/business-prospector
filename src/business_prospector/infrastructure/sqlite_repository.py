@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Any
 
 from business_prospector.application.ports import DuplicateMatch, PersistenceConflict
-from business_prospector.domain.exceptions import LeadNotFoundError
+from business_prospector.domain.exceptions import LeadNotFoundError, ValidationError
+from business_prospector.domain.deployment import validate_transition
 from business_prospector.domain.models import BusinessCandidate, Lead, WebsiteAssessment, utc_now
 from business_prospector.domain.identity import identity_domain
 from business_prospector.domain.normalization import normalize_address, normalize_phone, normalize_text
 from business_prospector.domain.website_assessment import WebsiteAssessmentReport
 from business_prospector.domain.first_website import FirstWebsiteMarketReport
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 LEAD_COLUMNS = (
     "id", "external_place_id", "slug", "name", "normalized_name", "category", "city",
@@ -106,6 +107,8 @@ class SQLiteLeadRepository:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
+            if int(connection.execute("PRAGMA user_version").fetchone()[0]) > SCHEMA_VERSION:
+                raise ValidationError("database schema is newer than this application")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA)
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -127,7 +130,96 @@ class SQLiteLeadRepository:
                 ).fetchone()[0]
             if "internal_website" not in table_sql or "sales_preview" not in table_sql:
                 self._migrate_pipeline_statuses(connection, "website_lifecycle")
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            connection.execute('SAVEPOINT deployment_migration')
+            try:
+                self._migrate_deployments(connection)
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            except Exception:
+                connection.execute('ROLLBACK TO deployment_migration')
+                connection.execute('RELEASE deployment_migration')
+                raise
+            connection.execute('RELEASE deployment_migration')
+
+    @staticmethod
+    def _migrate_deployments(connection: sqlite3.Connection) -> None:
+        """Add only new tables, after older lead-table rebuild migrations finish."""
+        connection.execute("""CREATE TABLE IF NOT EXISTS preview_deployments (
+            lead_id INTEGER PRIMARY KEY REFERENCES leads(id),
+            target_key TEXT NOT NULL UNIQUE,
+            preview_url TEXT NOT NULL UNIQUE,
+            preview_slug TEXT NOT NULL,
+            artifact_checksum TEXT NOT NULL,
+            state TEXT NOT NULL,
+            details_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )""")
+        connection.execute("""CREATE TABLE IF NOT EXISTS deployment_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_id INTEGER NOT NULL REFERENCES preview_deployments(lead_id),
+            attempt_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            details_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )""")
+        connection.execute("CREATE INDEX IF NOT EXISTS ix_deployment_events_lead ON deployment_events(lead_id, id)")
+
+    def claim_deployment(self, lead_id: int, target_key: str, preview_url: str,
+                         preview_slug: str, checksum: str) -> dict[str, Any]:
+        try:
+            with self._connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                row = connection.execute('SELECT * FROM preview_deployments WHERE lead_id = ?', (lead_id,)).fetchone()
+                if row:
+                    if (row['target_key'], row['preview_url'], row['preview_slug'], row['artifact_checksum']) != (
+                            target_key, preview_url, preview_slug, checksum):
+                        raise ValidationError('deployment identity changed; safe replacement is not supported')
+                else:
+                    now = utc_now()
+                    connection.execute(
+                        'INSERT INTO preview_deployments VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        (lead_id, target_key, preview_url, preview_slug, checksum, 'approved', '{}', now),
+                    )
+                    connection.execute('INSERT INTO deployment_events (lead_id, attempt_id, state, details_json, created_at) VALUES (?, ?, ?, ?, ?)',
+                                       (lead_id, 'approval-reference', 'approved', '{}', now))
+        except sqlite3.IntegrityError:
+            raise ValidationError('preview destination is already owned by another lead') from None
+        result = self.get_deployment(lead_id)
+        assert result is not None
+        return result
+
+    def deployment_owner(self, target_key: str, preview_url: str) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute('SELECT lead_id FROM preview_deployments WHERE target_key = ? OR preview_url = ?',
+                                     (target_key, preview_url)).fetchone()
+        return int(row[0]) if row else None
+
+    def record_deployment(self, lead_id: int, state: str, details: dict[str, Any], attempt_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute('SELECT state FROM preview_deployments WHERE lead_id = ?', (lead_id,)).fetchone()
+            if row is None:
+                raise ValidationError('deployment has not been reserved')
+            validate_transition(row['state'], state)
+            encoded, now = json.dumps(details, sort_keys=True), utc_now()
+            connection.execute('UPDATE preview_deployments SET state = ?, details_json = ?, updated_at = ? WHERE lead_id = ?',
+                               (state, encoded, now, lead_id))
+            connection.execute('INSERT INTO deployment_events (lead_id, attempt_id, state, details_json, created_at) VALUES (?, ?, ?, ?, ?)',
+                               (lead_id, attempt_id, state, encoded, now))
+
+    def get_deployment(self, lead_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute('SELECT * FROM preview_deployments WHERE lead_id = ?', (lead_id,)).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result['details'] = json.loads(result.pop('details_json'))
+        return result
+
+    def deployment_history(self, lead_id: int) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute('SELECT attempt_id, state, details_json, created_at FROM deployment_events WHERE lead_id = ? ORDER BY id',
+                                      (lead_id,)).fetchall()
+        return [{**dict(row), 'details_json': json.loads(row['details_json'])} for row in rows]
 
     @staticmethod
     def _migrate_statuses(connection: sqlite3.Connection) -> None:

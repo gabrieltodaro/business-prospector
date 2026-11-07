@@ -63,11 +63,22 @@ def envelope(data: Any = None, *, status: int = 1, errors: Any = None) -> bytes:
 
 
 class FakeTransport:
-    def __init__(self, *responses: HttpResponse) -> None:
+    def __init__(self, *responses: HttpResponse, publication: bool = False) -> None:
+        self.publication = publication
+        self.safety_requests = []
         self.responses = list(responses)
         self.requests: list[HttpRequest] = []
 
     def send(self, request: HttpRequest) -> HttpResponse:
+        from urllib.parse import parse_qs, urlsplit
+        params = parse_qs(urlsplit(request.url).query)
+        if '/get_file_information?' in request.url:
+            self.safety_requests.append(request)
+            path = params['path'][0]
+            return response({'exists': 1, 'type': 'dir', 'fullpath': '/home/prospector' + ('' if path == '.' else '/' + path)})
+        if self.publication and '/list_files?' in request.url and params.get('dir', [''])[0].startswith('public_html/sales-previews/drlaura'):
+            self.safety_requests.append(request)
+            return response({'files': [], 'dirs': []})
         self.requests.append(request)
         if not self.responses:
             raise AssertionError(f"unexpected request: {request.method} {request.url}")
@@ -503,7 +514,7 @@ def publish_transport(*, ssl_active: bool = False) -> FakeTransport:
         response({"succeeded": 1, "failed": 0, "uploads": []}),
         response({"succeeded": 1, "failed": 0, "uploads": []}),
         response({"succeeded": 1, "failed": 0, "uploads": []}),
-        response(ssl),
+        response(ssl), publication=True,
     )
 
 
@@ -511,14 +522,14 @@ def test_first_publish_creates_final_domain_then_uploads_directly(tmp_path: Path
     transport = publish_transport()
     provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
     result = provider.publish(site(tmp_path), "drlaura")
-    assert result.deployment_status == "published"
+    assert result.deployment_status == "uploaded"
     assert result.files_uploaded == 3
     assert result.domain_status == "created"
     assert result.ssl_status == "pending"
     assert result.preview_url == "https://drlaura.gapps.test"
     assert result.deployment_mode == "direct_first_publish"
     assert result.cleanup == "manual_required"
-    assert result.uploaded_files == ("index.html", "styles.css", "assets/hero.svg")
+    assert result.uploaded_files == ("assets/hero.svg", "styles.css", "index.html")
     urls = [request.url for request in transport.requests]
     assert "/execute/SubDomain/addsubdomain?" in urls[2]
     assert "dir=public_html%2Fsales-previews%2Fdrlaura" in urls[2]
@@ -537,7 +548,7 @@ def test_partial_direct_upload_reports_confirmed_files_without_fake_rollback(tmp
         response({}),
         response({}),
         response({"succeeded": 1, "failed": 0, "uploads": []}),
-        response({"succeeded": 0, "failed": 1, "uploads": []}),
+        response({"succeeded": 0, "failed": 1, "uploads": []}), publication=True,
     )
     provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
     with pytest.raises(CPanelError) as caught:
@@ -546,7 +557,7 @@ def test_partial_direct_upload_reports_confirmed_files_without_fake_rollback(tmp
     assert caught.value.safe_details == {
         "deployment_mode": "direct_first_publish",
         "cleanup": "manual_required",
-        "uploaded_files": ["index.html"],
+        "uploaded_files": ["assets/hero.svg"],
         "files_uploaded": 1,
         "failed_file": "styles.css",
         "cause": "upload_failed",
@@ -594,7 +605,7 @@ def test_status_is_read_only_and_reports_ssl_active() -> None:
     )
     provider = HostGatorPreviewDeploymentProvider(config(), CPanelUapiClient(config(), transport))
     result = provider.status("drlaura")
-    assert result.deployment_status == "published" and result.ssl_status == "active"
+    assert result.deployment_status == "uploaded" and result.ssl_status == "active"
     assert result.public_files == ("assets/", "index.html", "styles.css")
     assert result.staging_residual_present is True
     assert result.document_root_present is True
@@ -696,6 +707,17 @@ def test_unpublish_is_explicitly_unsupported_and_makes_no_request() -> None:
 class FakeProvider:
     def __init__(self) -> None:
         self.publish_calls = 0
+
+    def target(self, preview_slug):
+        from business_prospector.application.technical_deployment import TechnicalDeploymentTarget
+        return TechnicalDeploymentTarget(preview_slug, preview_slug + '.gapps.test', 'public_html/sales-previews/' + preview_slug)
+
+    def safe_to_retry(self, preview_slug):
+        return False
+
+    def verify(self, artifact, preview_slug):
+        from business_prospector.domain.deployment import VerificationResult
+        return VerificationResult('published', '2026-11-06T12:00:00+00:00', len(artifact.files), 'verified', 'verified')
 
     def publish(self, site_path: Path, preview_slug: str) -> DeploymentResult:
         self.publish_calls += 1

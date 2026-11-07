@@ -190,3 +190,14 @@ Specific risks:
 ## Verification of this change
 
 The initial investigation used local Git/file inspection and official documentation only. Documentation finalization additionally verifies GitHub branch identities before and after the authorized commit/push. No OpenClaw CLI/runtime, setup script, service-env file, operational database or Mac Mini connection is invoked. Changes are documentation-only; no new runtime tests are needed or claimed. Finalization checks the two-file diff, Markdown links/structure, sensitive-content review, preserved Phase 1/2 ancestry, unchanged `main`, matching local/remote commit identities and a clean working tree.
+
+## Phase 3 development delta
+
+Phase 3 adds SQLite v8 deployment reservations/events, public verification modules, two MCP
+tools and an optional launcher environment allowlist entry for expected preview IPs. Runtime
+dependencies and both plugin registration formats remain unchanged. The earlier v7 rollout
+notes above are historical; a Phase 3 rollout must rehearse v7→v8 on a copy, back up SQLite
+with WAL handled and preserve all sites/manifests. Validate the actual existing lead inventory,
+including the previously reported six leads, without assuming it is still current. Follow the
+same separately authorized maintenance and scoped reload procedure; no live update is part
+of Phase 3 development. See [the current deployment runbook](cpanel-deployment.md).

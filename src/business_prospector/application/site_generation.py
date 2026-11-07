@@ -247,7 +247,7 @@ class SiteGenerationService:
                 metadata = existing.get(key)
                 if metadata is not None and not isinstance(metadata, dict):
                     raise ValidationError('invalid existing publication metadata')
-                if metadata and metadata.get(status) == 'published':
+                if metadata and (metadata.get(status) == 'published' or key == 'deployment'):
                     raise ValidationError('published previews cannot be replaced')
             if reviewed_content is None:
                 reviewed_content = existing.get('reviewed_content')
@@ -404,6 +404,8 @@ class PersistedSiteGenerationWorkflow:
         allowed = {'internal_website', 'site_ready', 'sales_preview'} if revision else {'qualified'}
         if lead.status not in allowed:
             raise ValidationError('persisted lead must be an internal draft or unpublished preview' if revision else 'persisted lead must have qualified status')
+        if revision and self._repository.get_deployment(lead.id) is not None:
+            raise ValidationError('reserved deployment artifacts cannot be revised')
         if lead.opportunity_type != 'first_website':
             raise ValidationError('only first_website generation is supported; redesign remains unsupported')
         if revision and not SiteDraftService(self._generator.sites_root).inspect(lead.slug or '').exists:
@@ -427,6 +429,8 @@ class PersistedSiteGenerationWorkflow:
             nonlocal updated
             # Reject a concurrently changed lead instead of overwriting a later lifecycle decision.
             current = self._repository.get(lead_id)
+            if self._repository.get_deployment(lead_id) is not None:
+                raise ValidationError('reserved deployment artifacts cannot be revised')
             if current is None or current.to_dict() != lead.to_dict():
                 raise ValidationError('lead changed during generation; retry with current data')
             updated = self._repository.update(lead_id, {'status': 'internal_website'})

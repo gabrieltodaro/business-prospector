@@ -18,6 +18,7 @@ def isolated_runtime(tmp_path, monkeypatch):
     monkeypatch.setenv("BUSINESS_PROSPECTOR_CONFIG", str(ROOT / "config" / "default.json"))
     for name, value in {
         "GOOGLE_MAPS_API_KEY": "test-only",
+        "BUSINESS_PROSPECTOR_PREVIEW_EXPECTED_IPS": "",
         "BUSINESS_PROSPECTOR_CPANEL_BASE_URL": "https://cpanel.example.test:2083",
         "BUSINESS_PROSPECTOR_CPANEL_USERNAME": "test-user",
         "BUSINESS_PROSPECTOR_CPANEL_API_TOKEN": "test-only",
@@ -33,3 +34,9 @@ def isolated_runtime(tmp_path, monkeypatch):
         return original(sock, address)
 
     monkeypatch.setattr(socket.socket, "connect", connect)
+    original_resolver = socket.getaddrinfo
+    def resolve(host, *args, **kwargs):
+        if host not in {"127.0.0.1", "::1", "localhost"}:
+            raise AssertionError("external DNS is forbidden in tests")
+        return original_resolver(host, *args, **kwargs)
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
