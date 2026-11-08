@@ -1,0 +1,155 @@
+{
+  "human_reviewed_reference": {
+    "source": "User design-quality failure report in this conversation",
+    "scope": "Negative reference only; no new human-approved positive examples were supplied.",
+    "observations": [
+      "Generic editorial composition and weak identity",
+      "Excessive whitespace and repetitive sections",
+      "Generic copy and weak photographic direction",
+      "Bright red dental-instrument photograph incompatible with the page palette"
+    ],
+    "provenance": "User-reported observations; the original customer page was not accessed."
+  },
+  "agent_photo_observations": {
+    "7800563": {
+      "source": "Local previously downloaded licensed Pexels demonstration file, inspected by development agent on 2026-11-07; not human approval",
+      "sha256": "424f67f43226e4031ccb01e48c138135900ee4f0ebd883d3832b8642cf02126b",
+      "assessment": {
+        "criteria": {
+          "subject_relevance": {
+            "verdict": "fail",
+            "evidence": "The subject is isolated dental probes and scissors, not welcoming preventive care."
+          },
+          "composition": {
+            "verdict": "fail",
+            "evidence": "Tools occupy only the lower half; the upper half is empty pale blue texture."
+          },
+          "lighting": {
+            "verdict": "pass",
+            "evidence": "Soft even light, with clearly legible metallic tool edges."
+          },
+          "color_harmony": {
+            "verdict": "pass",
+            "evidence": "Desaturated pale blue is visually quiet and compatible with a muted palette."
+          },
+          "emotional_tone": {
+            "verdict": "fail",
+            "evidence": "Sharp clinical instruments may create anxiety rather than a reassuring first impression."
+          },
+          "visual_clutter": {
+            "verdict": "pass",
+            "evidence": "Only a few instruments; no competing labels or background clutter."
+          },
+          "hero_suitability": {
+            "verdict": "fail",
+            "evidence": "Enlarging this still life makes equipment dominate the visitor story."
+          },
+          "mobile_cropping": {
+            "verdict": "fail",
+            "evidence": "A shallow landscape crop would remove the tool handles or show mostly empty background."
+          }
+        },
+        "rejection_reasons": [
+          "Clinical tool still life and large empty area undermine the preventive-care direction."
+        ],
+        "focal_point": [
+          0.5,
+          0.5
+        ],
+        "revisions": {}
+      }
+    },
+    "1279330": {
+      "source": "Local previously downloaded licensed Pexels demonstration file, inspected by development agent on 2026-11-07; not human approval",
+      "sha256": "14538c2b6aa3d994a8b93b74ff0b946813b5d3ce8ae7ad9539fe833e81d4a239",
+      "assessment": {
+        "criteria": {
+          "subject_relevance": {
+            "verdict": "pass",
+            "evidence": "The image visibly shows pasta, tomatoes and basil, matching the illustrative menu direction."
+          },
+          "composition": {
+            "verdict": "pass",
+            "evidence": "The fork draws attention toward the pasta; central food remains readable in a split hero."
+          },
+          "lighting": {
+            "verdict": "pass",
+            "evidence": "Soft highlights preserve texture in noodles and leaves without harsh glare."
+          },
+          "color_harmony": {
+            "verdict": "pass",
+            "evidence": "Warm pasta and tomato colors work with terracotta; basil supplies a restrained green accent."
+          },
+          "emotional_tone": {
+            "verdict": "pass",
+            "evidence": "Close food detail feels appetizing and informal."
+          },
+          "visual_clutter": {
+            "verdict": "pass",
+            "evidence": "The plate and table form a quiet background around one food subject."
+          },
+          "hero_suitability": {
+            "verdict": "pass",
+            "evidence": "Food can lead an illustrative restaurant hero with text kept on a contrasting surface."
+          },
+          "mobile_cropping": {
+            "verdict": "pass",
+            "evidence": "A centered crop retains noodles and basil; the whole fork is not essential."
+          }
+        },
+        "rejection_reasons": [],
+        "focal_point": [
+          0.5,
+          0.5
+        ],
+        "revisions": {}
+      }
+    },
+    "3993460": {
+      "source": "Local previously downloaded licensed Pexels demonstration file, inspected by development agent on 2026-11-07; not human approval",
+      "sha256": "fa35e4cb6812398db6d97b7a9246f87b30c04801545083915bf4cd6d0a90f6fb",
+      "assessment": {
+        "criteria": {
+          "subject_relevance": {
+            "verdict": "pass",
+            "evidence": "A stylist holds scissors in a salon setting; appropriate as an explicitly illustrative craft image."
+          },
+          "composition": {
+            "verdict": "pass",
+            "evidence": "The hand and scissors are sharply focused near center; the background is blurred."
+          },
+          "lighting": {
+            "verdict": "pass",
+            "evidence": "Ambient light defines the hand and metal scissors without overwhelming highlights."
+          },
+          "color_harmony": {
+            "verdict": "pass",
+            "evidence": "Muted brown, gray and dark tones sit comfortably beside rose or slate."
+          },
+          "emotional_tone": {
+            "verdict": "pass",
+            "evidence": "The visible gesture conveys hair-styling craft; avoid implying this person works for the lead."
+          },
+          "visual_clutter": {
+            "verdict": "pass",
+            "evidence": "Blurred overhead lights form shapes but do not obscure the main subject."
+          },
+          "hero_suitability": {
+            "verdict": "pass",
+            "evidence": "The portrait supports an asymmetric split with text separate from the image."
+          },
+          "mobile_cropping": {
+            "verdict": "pass",
+            "evidence": "A focal point at the central hand keeps the scissors visible in a shallow mobile crop."
+          }
+        },
+        "rejection_reasons": [],
+        "focal_point": [
+          0.5,
+          0.5
+        ],
+        "revisions": {}
+      }
+    }
+  }
+}

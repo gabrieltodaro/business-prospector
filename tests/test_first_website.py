@@ -213,7 +213,7 @@ def test_benchmark_selection_is_independent_of_google_order_and_has_stable_ties(
     ]
     forward = prospecting.select_benchmarks(candidate(), pool, maximum=3)
     reverse = prospecting.select_benchmarks(candidate(), list(reversed(pool)), maximum=3)
-    expected = ["Rating", "Reviews", "Alpha"]
+    expected = ["Reviews", "Alpha", "Zulu"]
     assert [item.name for item in forward.selected] == expected
     assert [item.name for item in reverse.selected] == expected
 

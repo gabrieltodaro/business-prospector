@@ -331,7 +331,7 @@ def get_first_website_benchmark_policy() -> dict[str, Any]:
 
 @mcp.tool()
 def select_first_website_benchmarks(
-    target: dict[str, Any], candidates: list[dict[str, Any]], max_benchmarks: int = 2,
+    target: dict[str, Any], candidates: list[dict[str, Any]], max_benchmarks: int = 3,
 ) -> dict[str, Any]:
     """Select the strongest bounded market benchmarks for first-website research."""
     try:
@@ -624,6 +624,23 @@ def validate_website_assessment(assessment: dict[str, Any]) -> dict[str, Any]:
     except (ProspectorError, TypeError, ValueError) as exc:
         LOGGER.warning("validate_website_assessment failed: %s", exc)
         return _response("validate_website_assessment", error=str(exc))
+
+
+def _design_service(ctx):
+    from business_prospector.application.art_direction import ArtDirectionService
+    from business_prospector.infrastructure.design_store import DesignStore
+    from business_prospector.infrastructure.mcp_vision import McpVisualEvaluator
+    from business_prospector.infrastructure.visual_browser import ChromiumPageCapture
+    repository = _repository()
+    root = _data_dir()
+    workflow = PersistedSiteGenerationWorkflow(repository, SiteGenerationService(_sites_root()),
+                                                LocalSiteAssetLibrary(root / "reviewed-assets"))
+    return ArtDirectionService(repository, workflow, _stock_service(), DesignStore(root),
+        McpVisualEvaluator(ctx.session), ChromiumPageCapture(os.environ.get("BUSINESS_PROSPECTOR_CHROMIUM_EXECUTABLE")), _sites_root())
+
+
+from .design_tools import register_design_tools
+register_design_tools(mcp, _design_service)
 
 
 def main() -> None:

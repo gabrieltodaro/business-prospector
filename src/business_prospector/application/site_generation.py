@@ -215,19 +215,23 @@ class SiteGenerationService:
     def generate(
         self, lead: dict[str, Any], research: dict[str, Any], *, overwrite: bool = False,
         assets: tuple[SiteAsset, ...] | None = None, asset_source_root: Path | None = None,
-        reviewed_content: dict[str, Any] | None = None,
-        after_install: Callable[[], None] | None = None,
+        reviewed_content: dict[str, Any] | None = None, art_direction: dict[str, Any] | None = None,
+        after_install: Callable[[], None] | None = None, expected_artifact_checksum: str | None = None,
     ) -> SiteGenerationResult:
         from .artifacts import site_operation_lock
         initial = FirstWebsiteSiteBrief.from_inputs(lead, research, allow_revision=overwrite)
         with site_operation_lock(self._sites_root, initial.lead_slug):
+            if expected_artifact_checksum is not None:
+                from .artifacts import capture_artifact
+                if capture_artifact(self._sites_root / initial.lead_slug).checksum != expected_artifact_checksum:
+                    raise ValidationError('visual review is stale; artifact changed before revision')
             return self._generate_locked(lead, research, initial, overwrite, assets, asset_source_root,
-                                         reviewed_content, after_install)
+                                         reviewed_content, after_install, art_direction)
 
     def _generate_locked(
         self, lead: dict[str, Any], research: dict[str, Any], initial: FirstWebsiteSiteBrief,
         overwrite: bool, assets: tuple[SiteAsset, ...] | None, asset_source_root: Path | None,
-        reviewed_content: dict[str, Any] | None, after_install: Callable[[], None] | None,
+        reviewed_content: dict[str, Any] | None, after_install: Callable[[], None] | None, art_direction: dict[str, Any] | None,
     ) -> SiteGenerationResult:
         from .artifacts import read_local_manifest, capture_artifact
         from .draft_revision import install_validated_draft
@@ -249,6 +253,8 @@ class SiteGenerationService:
                     raise ValidationError('invalid existing publication metadata')
                 if metadata and (metadata.get(status) == 'published' or key == 'deployment'):
                     raise ValidationError('published previews cannot be replaced')
+            if art_direction is None:
+                art_direction = existing.get('art_direction')
             if reviewed_content is None:
                 reviewed_content = existing.get('reviewed_content')
             if assets is None:
@@ -260,13 +266,15 @@ class SiteGenerationService:
         assets = tuple(asset for asset in (assets or ()) if not (asset.key == 'hero-visual' and asset.source_type == 'generated' and asset.asset_type == 'illustration'))
         if len(assets) > 30 or len({asset.key for asset in assets}) != len(assets):
             raise ValidationError('draft supports up to 30 distinct assets')
-        image_count = sum(asset.approval_status in {'approved_for_draft', 'approved_for_publish'}
+        if art_direction and art_direction.get('hero_asset_key') and not any(a.key == art_direction['hero_asset_key'] and a.asset_type != 'logo' for a in assets):
+            raise ValidationError('planned hero asset is not in the reviewed inventory')
+        image_count = sum(asset.approval_status in {'approved_for_draft', 'agent_curated_draft', 'approved_for_publish'}
                           and asset.asset_type != 'logo' for asset in assets)
         hero_asset = next((asset for asset in assets if asset.asset_type != 'logo' and
-                           asset.approval_status in {'approved_for_draft', 'approved_for_publish'}), None)
+                           asset.approval_status in {'approved_for_draft', 'agent_curated_draft', 'approved_for_publish'}), None)
         ratio = hero_asset.width / hero_asset.height if hero_asset and hero_asset.width and hero_asset.height else None
         brief = FirstWebsiteSiteBrief.from_inputs(lead, research, reviewed_content=reviewed_content,
-                                                  image_count=image_count, hero_aspect_ratio=ratio, allow_revision=overwrite)
+                                                  image_count=image_count, hero_aspect_ratio=ratio, allow_revision=overwrite, art_direction=art_direction)
         self._sites_root.mkdir(parents=True, exist_ok=True)
         temp = Path(tempfile.mkdtemp(prefix=f'.{brief.lead_slug}-', dir=self._sites_root))
         try:
@@ -314,7 +322,7 @@ class SiteGenerationService:
         assets_dir.mkdir()
         rendered_assets: list[SiteAsset] = []
         for asset in assets:
-            if asset.approval_status not in {'approved_for_draft', 'approved_for_publish'}:
+            if asset.approval_status not in {'approved_for_draft', 'agent_curated_draft', 'approved_for_publish'}:
                 continue
             if asset_source_root is None:
                 raise ValidationError('approved local assets require a controlled source root')
@@ -339,6 +347,7 @@ class SiteGenerationService:
             'benchmark_market': brief.market_research.benchmark_market,
             'strategy_version': SITE_STRATEGY_VERSION, 'strategy': brief.strategy.to_dict(),
             'reviewed_content': brief.reviewed_content.to_dict(), 'content_model': model.to_dict(),
+            'art_direction': brief.art_direction,
             'preview_kind': 'internal_draft', 'indexing_policy': 'noindex,nofollow,noarchive',
             'missing_information': list(brief.missing_information), 'generated_files': list(GENERATED_FILES),
             'assets': [asset.to_dict() for asset in rendered_assets],
@@ -364,21 +373,26 @@ class PersistedSiteGenerationWorkflow:
 
     def generate(
         self, lead_id: int, research: dict[str, Any], *, overwrite: bool = False,
-        reviewed_content: dict[str, Any] | None = None, asset_keys: list[str] | None = None,
+        reviewed_content: dict[str, Any] | None = None, asset_keys: list[str] | None = None, art_direction: dict[str, Any] | None = None,
+        expected_lead: dict[str, Any] | None = None, expected_artifact_checksum: str | None = None,
     ) -> tuple[SiteGenerationResult, Lead | None]:
         return self._run(lead_id, research, overwrite=overwrite, revision=False,
-                         reviewed_content=reviewed_content, asset_keys=asset_keys)
+                         reviewed_content=reviewed_content, asset_keys=asset_keys, art_direction=art_direction,
+                         expected_lead=expected_lead, expected_artifact_checksum=expected_artifact_checksum)
 
     def revise(
         self, lead_id: int, *, reviewed_content: dict[str, Any] | None = None,
-        asset_keys: list[str] | None = None,
+        asset_keys: list[str] | None = None, art_direction: dict[str, Any] | None = None,
+        expected_lead: dict[str, Any] | None = None, expected_artifact_checksum: str | None = None,
     ) -> tuple[SiteGenerationResult, Lead | None]:
         return self._run(lead_id, None, overwrite=True, revision=True,
-                         reviewed_content=reviewed_content, asset_keys=asset_keys)
+                         reviewed_content=reviewed_content, asset_keys=asset_keys, art_direction=art_direction,
+                         expected_lead=expected_lead, expected_artifact_checksum=expected_artifact_checksum)
 
     def _run(
         self, lead_id: int, research: dict[str, Any] | None, *, overwrite: bool, revision: bool,
-        reviewed_content: dict[str, Any] | None, asset_keys: list[str] | None,
+        reviewed_content: dict[str, Any] | None, asset_keys: list[str] | None, art_direction: dict[str, Any] | None,
+        expected_lead: dict[str, Any] | None, expected_artifact_checksum: str | None,
     ) -> tuple[SiteGenerationResult, Lead | None]:
         from business_prospector.domain.first_website import FirstWebsiteMarketReport
         if type(lead_id) is not int or lead_id < 1:
@@ -386,6 +400,8 @@ class PersistedSiteGenerationWorkflow:
         lead = self._repository.get(lead_id)
         if lead is None:
             raise ValidationError('persisted lead not found')
+        if expected_lead is not None and lead.to_dict() != expected_lead:
+            raise ValidationError('lead changed after art direction validation')
         allowed = {'internal_website', 'site_ready', 'sales_preview'} if revision else {'qualified'}
         if lead.status not in allowed:
             raise ValidationError('persisted lead must be an internal draft or unpublished preview' if revision else 'persisted lead must have qualified status')
@@ -421,6 +437,6 @@ class PersistedSiteGenerationWorkflow:
             updated = self._repository.update(lead_id, {'status': 'internal_website'})
         result = self._generator.generate(
             lead.to_dict(), supplied, overwrite=overwrite, reviewed_content=reviewed_content,
-            assets=assets, asset_source_root=source_root, after_install=commit_status,
+            assets=assets, asset_source_root=source_root, after_install=commit_status, art_direction=art_direction, expected_artifact_checksum=expected_artifact_checksum,
         )
         return result, updated

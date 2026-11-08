@@ -167,3 +167,32 @@ footer > a { white-space: nowrap; min-height: 44px; }
   :root { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Plan-controlled composition: editorial emphasis and density, not category templates. */
+.art-directed { --section-space: clamp(2.5rem, 4.5vw, 4.5rem); }
+.art-directed.density-compact { --section-space: clamp(1.8rem, 3vw, 3rem); }
+.art-directed.density-airy { --section-space: clamp(3rem, 6vw, 6rem); }
+.art-directed .content-section { padding-block: var(--section-space); }
+.art-directed .hero { padding-block: var(--section-space); }
+.art-directed .emphasis-quiet { grid-template-columns: 1fr 2fr; }
+.art-directed .emphasis-quiet h2 { font-size: clamp(1.5rem, 2.4vw, 2.5rem); }
+.art-directed .emphasis-quiet .eyebrow { margin-bottom: .7rem; }
+.art-directed .emphasis-feature:not(.contact):not(.reputation) { grid-template-columns: 1fr; gap: 1.8rem; }
+.art-directed .emphasis-feature .content-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 3rem; }
+.art-directed .emphasis-feature .content-list li { padding-block: 1.1rem; }
+.art-directed .detail-media { margin: 0 var(--gutter) 2rem; max-width: 70rem; }
+.art-directed .detail-media img { width: 100%; max-height: 24rem; object-fit: cover; }
+.art-directed.layout-editorial_split .hero-media img { border-radius: 0; }
+.art-directed.density-compact h1 { font-size: clamp(2.6rem, 5.5vw, 6rem); }
+@media (max-width: 720px) {
+  .art-directed .content-section, .art-directed .emphasis-quiet { grid-template-columns: 1fr; gap: 1.4rem; }
+  .art-directed .emphasis-feature .content-list { grid-template-columns: 1fr; }
+  .art-directed.responsive-image_first .hero { display: flex; flex-direction: column; align-items: stretch; }
+  .art-directed.responsive-image_first .hero-media { order: -1; position: static; padding-top: 0; }
+  .art-directed.responsive-image_first .hero-media img { height: 13rem; }
+  .art-directed.responsive-image_first .hero-media::after { display: none; }
+  .art-directed.responsive-image_first .photo-credit { position: static; }
+  .art-directed.density-compact .hero-brand { margin-bottom: .6rem; }
+  .art-directed.density-compact .eyebrow { margin-bottom: .8rem; }
+  .art-directed.density-compact .lede, .art-directed.density-compact .actions { margin-top: 1rem; }
+}

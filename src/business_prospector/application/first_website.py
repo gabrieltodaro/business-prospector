@@ -110,15 +110,25 @@ def _invalid_candidate_snapshot(raw: object, index: int) -> dict[str, Any]:
     }
 
 
+def selection_matches_target(receipt: dict[str, Any], target: BusinessCandidate) -> bool:
+    """Share the persisted selection identity/context boundary with visual research."""
+    return all((receipt['target'].get(key) or '') == (getattr(target, key) or '')
+               for key in ('external_place_id', 'name', 'city', 'category', 'website_url'))
+
+
 class FirstWebsiteProspectingService:
     def __init__(self, repository: LeadRepository, config: ProspectingConfig) -> None:
         self._repository = repository
         self._config = config
 
-    @staticmethod
-    def _benchmark_rank(item: BusinessCandidate) -> tuple[float, int, str, str, str]:
+    def _benchmark_rank(self, item: BusinessCandidate) -> tuple[float, int, str, str, str]:
+        # Shrink sparse ratings toward the configured minimum: a 5.0 with few
+        # reviews should not automatically beat a well-established 4.9 business.
+        policy = self._config.first_website.benchmark_research
+        weight = max(1, policy.minimum_reviews)
+        reputation = (item.rating * item.review_count + policy.minimum_rating * weight) / (item.review_count + weight)
         return (
-            -item.rating,
+            -reputation,
             -item.review_count,
             normalize_text(item.name),
             item.external_place_id or "",
@@ -126,7 +136,7 @@ class FirstWebsiteProspectingService:
         )
 
     def select_benchmarks(
-        self, raw_target: dict[str, Any], raw_candidates: list[dict[str, Any]], maximum: int = 2,
+        self, raw_target: dict[str, Any], raw_candidates: list[dict[str, Any]], maximum: int = 3,
     ) -> BenchmarkSelection:
         if type(maximum) is not int or maximum < 1:
             raise ValidationError("maximum benchmarks must be a positive integer")
@@ -234,11 +244,9 @@ class FirstWebsiteProspectingService:
         receipt = self._repository.get_benchmark_selection(report.selection_id) if report.selection_id else None
         if receipt is None:
             return "valid benchmark selection_id is required; select benchmarks again"
-        selected_target = receipt["target"]
         # Identity and research context must both match; contact enrichment may differ.
-        for key in ("external_place_id", "name", "city", "category", "website_url"):
-            if (selected_target.get(key) or "") != (getattr(target, key) or ""):
-                return "benchmark selection belongs to a different target"
+        if not selection_matches_target(receipt, target):
+            return "benchmark selection belongs to a different target"
         if receipt["benchmark_market"] != report.benchmark_market:
             return "benchmark selection market mismatch"
         selected = receipt["selected"]

@@ -98,6 +98,8 @@ class StockProvenance:
     reviewed_by: str
     reviewed_at: str
     illustrative: bool = True
+    review_kind: str = "human_review"
+    visual_assessment_id: str | None = None
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> StockProvenance:
@@ -111,6 +113,12 @@ class StockProvenance:
                 public_url(getattr(result, name), name)
             if result.illustrative is not True or datetime.fromisoformat(result.reviewed_at.replace('Z', '+00:00')).tzinfo is None:
                 raise ValueError('review timestamp and illustrative disclosure required')
+            if result.review_kind not in {'human_review', 'agent_curation'}:
+                raise ValueError('invalid stock review kind')
+            if result.review_kind == 'agent_curation':
+                from uuid import UUID
+                if str(UUID(result.visual_assessment_id)) != result.visual_assessment_id:
+                    raise ValueError('agent curation requires a visual assessment receipt')
             return result
         except (TypeError, ValueError) as exc:
             raise ValidationError('invalid reviewed stock provenance') from exc

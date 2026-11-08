@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .exceptions import ValidationError
@@ -44,12 +44,13 @@ class FirstWebsiteSiteBrief:
     missing_information: tuple[str, ...]
     reviewed_content: ReviewedBusinessContent
     source: str = "manual"
+    art_direction: dict[str, Any] | None = None
 
     @classmethod
     def from_inputs(
         cls, lead: dict[str, Any], research: dict[str, Any], *,
         reviewed_content: dict[str, Any] | None = None, image_count: int = 0,
-        allow_revision: bool = False, hero_aspect_ratio: float | None = None,
+        allow_revision: bool = False, hero_aspect_ratio: float | None = None, art_direction: dict[str, Any] | None = None,
     ) -> "FirstWebsiteSiteBrief":
         if not isinstance(lead, dict):
             raise ValidationError("lead must be an object")
@@ -93,12 +94,19 @@ class FirstWebsiteSiteBrief:
             ("professional_biography", content.values("biography") or None), ("opening_hours", content.values("opening_hours") or None),
         ) if value is None)
         strategy = derive_strategy(lead, report, content, image_count, hero_aspect_ratio)
+        if art_direction is not None:
+            from .art_direction import ArtDirectionPlan, business_evidence
+            art_direction = ArtDirectionPlan.parse(art_direction, evidence=business_evidence(lead, content), sections=set(strategy.sections)).to_dict()
+            kinds = tuple(row['kind'] for row in art_direction['sections'])
+            composition = art_direction['hero_composition'] if image_count and art_direction['image_placement'] == 'hero' else 'minimal_typography'
+            strategy = replace(strategy, sections=kinds, navigation=tuple(k for k in kinds if k != 'hero'),
+                palette=art_direction['palette'], typography=art_direction['typography'], hero_composition=composition)
         return cls(
             slug, name, category, city, address, phone, whatsapp, confirmed, instagram, maps_url,
             float(rating), reviews, "first_website", lead["status"],
             _optional_text(lead.get("batch_id"), "batch_id", 100),
             _optional_text(lead.get("external_place_id"), "external_place_id", 300),
-            report, strategy, missing, content, _optional_text(lead.get("source"), "source", 100) or "manual",
+            report, strategy, missing, content, _optional_text(lead.get("source"), "source", 100) or "manual", art_direction,
         )
 
     def to_dict(self) -> dict[str, Any]:

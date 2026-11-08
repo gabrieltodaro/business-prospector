@@ -164,9 +164,10 @@ were inspected and the copy/image selection refined; results are in the accompan
 
 ## Boundaries and limitations
 
-- Matching uses category/cuisine vocabulary, caption keywords and dimensions, not
-  semantic image recognition. Human review remains essential; unknown niches receive
-  typography. Query taxonomies can be extended without changing the renderer/provider.
+- Candidate prefiltering uses category/cuisine vocabulary, captions and dimensions.
+  The optional [art-direction workflow](art-direction.md) adds actual pixel assessment
+  and distinct agent curation for internal drafts. Human commercial review remains
+  essential; unavailable vision never grants visual acceptance.
 - Pixabay and Pexels are implemented. Credentials, account quota and current provider availability
   must be verified in an authorized runtime before live API use.
 - System fonts vary by operating system. Browser evidence covers Chromium, not a claim

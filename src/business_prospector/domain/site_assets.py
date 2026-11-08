@@ -15,7 +15,7 @@ SOURCE_TYPES = {
     "generated", "placeholder", "unknown",
 }
 RIGHTS_STATUSES = {"likely_business_owned", "licensed", "generated", "unknown", "do_not_use"}
-APPROVAL_STATUSES = {"candidate", "approved_for_draft", "approved_for_publish", "rejected"}
+APPROVAL_STATUSES = {"agent_curated_draft", "candidate", "approved_for_draft", "approved_for_publish", "rejected"}
 SAFE_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
@@ -101,8 +101,12 @@ class SiteAsset:
             raise ValidationError("reviewed asset requires MIME and byte size")
         if asset.source_type == "licensed_stock":
             asset = replace(asset, stock=StockProvenance.from_dict(payload.get("stock")))
+            if asset.approval_status == "agent_curated_draft" and asset.stock.review_kind != "agent_curation":
+                raise ValidationError("agent draft requires agent curation provenance")
             if asset.asset_type != "photo" or asset.business_identity_match:
                 raise ValidationError("stock imagery must be an illustrative photo, not business identity")
+        if asset.approval_status == "agent_curated_draft" and asset.source_type != "licensed_stock":
+            raise ValidationError("agent curation is restricted to licensed stock")
         return asset.with_local_file(local_file, checksum, asset.mime_type, asset.byte_size)
 
     def classified(self, *, rights_status: str, approval_status: str) -> "SiteAsset":

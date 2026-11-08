@@ -207,3 +207,12 @@ See [the Phase 1 implementation report](docs/phase-1-implementation.md) for vali
 changes, test results, compatibility requirements and remaining limitations. New research
 qualification requires a stored benchmark selection receipt; publication requires explicit
 approval of the exact validated public file inventory. No automatic deployment is enabled.
+
+## Art direction and visual review
+
+The [art-direction pipeline](docs/art-direction.md) adds three-reference visual
+research, evidence-backed plans, pixel-based photo evaluation and bounded
+render–review–revise cycles through MCP. Agent curation is limited to internal
+drafts; human commercial approval remains required. See the
+[validation record](docs/art-direction-validation.md) for demonstrated coverage
+and limits.

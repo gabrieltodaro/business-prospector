@@ -18,10 +18,11 @@ def action_link(action: ContactAction, secondary: bool = False) -> str:
     return f'<a class="{style}" href="{escape(action.url, quote=True)}"{external}>{escape(action.label)}<span aria-hidden="true"> ↗</span></a>'
 
 
-def image(asset: SiteAsset, *, hero: bool = False) -> str:
+def image(asset: SiteAsset, *, hero: bool = False, focal: list[float] | None = None) -> str:
     dimensions = f' width="{asset.width}" height="{asset.height}"' if asset.width and asset.height else ''
     loading = ' fetchpriority="high"' if hero else ' loading="lazy"'
-    return f'<img src="{escape(asset.local_file or "", quote=True)}" alt="{escape(asset.alt_text or "", quote=True)}"{dimensions}{loading} decoding="async">'
+    crop = f' style="object-position:{focal[0]*100:g}% {focal[1]*100:g}%"' if focal else ''
+    return f'<img{crop} src="{escape(asset.local_file or "", quote=True)}" alt="{escape(asset.alt_text or "", quote=True)}"{dimensions}{loading} decoding="async">'
 
 
 def photo_caption(asset: SiteAsset) -> str:
@@ -43,7 +44,7 @@ def stock_outreach_context(assets: tuple[SiteAsset, ...]) -> dict[str, Any]:
             'images': [{'asset_key': a.key, 'provenance': a.stock.to_dict() if a.stock else None} for a in stock]}
 
 
-def section_html(section: ContentSection, model: WebsiteContentModel, assets: tuple[SiteAsset, ...], index: int) -> str:
+def section_html(section: ContentSection, model: WebsiteContentModel, assets: tuple[SiteAsset, ...], index: int, emphasis: str = "standard") -> str:
     body = ''.join(f'<p>{escape(paragraph)}</p>' for paragraph in section.paragraphs)
     if section.kind == 'faq':
         body += ''.join(f'<details class="faq-item"><summary>{escape(question)}</summary><p>{escape(answer)}</p></details>'
@@ -61,7 +62,7 @@ def section_html(section: ContentSection, model: WebsiteContentModel, assets: tu
     if section.kind == 'contact':
         body = '<p class="contact-intro">O próximo passo é uma conversa.</p>' + body
         body += '<div class="actions">' + (action_link(model.primary_action) if model.primary_action.url != '#contato' else '') + ''.join(action_link(action, True) for action in model.secondary_actions if action.label != 'Ver no mapa') + '</div>'
-    return (f'<section id="{section.id}" class="content-section {section.kind}" aria-labelledby="heading-{section.id}">'
+    return (f'<section id="{section.id}" class="content-section {section.kind} emphasis-{emphasis}" aria-labelledby="heading-{section.id}">'
             f'<div class="section-heading"><p class="eyebrow">{index:02d} / {escape(SECTION_LABELS[section.kind])}</p>'
             f'<h2 id="heading-{section.id}">{escape(section.title)}</h2></div><div class="section-body">{body}</div></section>')
 
@@ -74,11 +75,21 @@ def render_html(brief: FirstWebsiteSiteBrief, assets: tuple[SiteAsset, ...], mod
     desktop = tuple(key for key in strategy.navigation if key != 'contact')[:3] + ('contact',)
     logo = next((asset for asset in assets if asset.asset_type == 'logo'), None)
     photos = tuple(asset for asset in assets if asset.asset_type != 'logo')
-    body = ''.join(section_html(section, model, photos, i) for i, section in enumerate(model.sections[1:], 1))
+    plan = brief.art_direction or {}
+    if plan.get('hero_asset_key'):
+        photos = tuple(sorted(photos, key=lambda a: a.key != plan['hero_asset_key']))
+    emphasis = {s['kind']: s['emphasis'] for s in plan.get('sections', [])}
+    body = ''.join(section_html(section, model, photos, i, emphasis.get(section.kind, 'standard')) for i, section in enumerate(model.sections[1:], 1))
     name, city = escape(model.name), escape(model.city)
     description = escape(f'Demonstração independente para {model.name}, em {model.city}. Não é o site oficial.', quote=True)
     brand = (f'<span class="brand-logo">{image(logo)}</span>' if logo else '') + escape(model.display_name)
-    visual = f'<figure class="hero-media">{image(photos[0], hero=True)}{photo_caption(photos[0])}</figure>' if photos else ''
+    visual = f'<figure class="hero-media">{image(photos[0], hero=True, focal=plan.get('focal_point'))}{photo_caption(photos[0])}</figure>' if photos else ''
+    if plan.get('image_placement') == 'none':
+        visual = ''
+    if plan.get('image_placement') == 'detail':
+        body = visual.replace('hero-media', 'detail-media') + body
+        visual = ''
+    direction_classes = (' art-directed density-' + plan['density'] + ' responsive-' + plan['responsive_composition']) if plan else ''
     headline = '<br>'.join(escape(part) for part in model.headline.split('\n'))
     # Preview branding is distinct from the business identity; no implied client endorsement.
     provider_links = {'pexels': ('Pexels', 'https://www.pexels.com'), 'pixabay': ('Pixabay', 'https://pixabay.com')}
@@ -92,7 +103,7 @@ def render_html(brief: FirstWebsiteSiteBrief, assets: tuple[SiteAsset, ...], mod
 <title>{name} | Demonstração independente</title><meta name="description" content="{description}">
 <meta property="og:title" content="{name} — Demonstração"><meta property="og:description" content="{description}">
 <link rel="stylesheet" href="styles.css"></head>
-<body class="palette-{strategy.palette} type-{strategy.typography} layout-{strategy.hero_composition} category-{strategy.category_policy}">
+<body class="palette-{strategy.palette} type-{strategy.typography} layout-{strategy.hero_composition} category-{strategy.category_policy}{direction_classes}">
 <a class="skip-link" href="#inicio">Ir para o conteúdo</a>
 <aside class="preview-disclosure" aria-label="Aviso de demonstração"><span>Gapps.Tech / Prévia independente</span><p>{escape(model.disclosure)}</p></aside>
 <header class="site-header"><a class="brand" href="#inicio">{brand}</a><nav class="desktop-nav" aria-label="Navegação principal">{links(desktop)}</nav>

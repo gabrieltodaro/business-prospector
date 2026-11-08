@@ -29,7 +29,7 @@ class LocalSiteAssetLibrary:
             raise ValidationError('unknown or duplicate reviewed asset keys')
         selected = tuple(by_key[key] for key in keys)
         for asset in selected:
-            if asset.approval_status not in {'approved_for_draft', 'approved_for_publish'}:
+            if asset.approval_status not in {'approved_for_draft', 'agent_curated_draft', 'approved_for_publish'}:
                 raise ValidationError('selected asset is not approved for draft')
             read_local_asset(root, asset)
         return selected, root

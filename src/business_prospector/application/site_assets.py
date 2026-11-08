@@ -87,7 +87,7 @@ class SiteAssetIngestionService:
         self._fetch = fetch
 
     def ingest(self, asset: SiteAsset, assets_directory: Path) -> SiteAsset:
-        if asset.approval_status != "approved_for_draft" or not asset.source_url:
+        if asset.approval_status not in {"approved_for_draft", "agent_curated_draft"} or not asset.source_url:
             raise ValidationError("asset is not approved for draft ingestion")
         downloaded = self._fetch(asset.source_url)
         if downloaded.mime_type not in SAFE_IMAGE_MIMES or asset.mime_type != downloaded.mime_type:

@@ -147,3 +147,9 @@ essa identidade exigem aprovacao explicita novamente. Um Sales Preview sem reser
 Referências normativas: [pathlib](https://docs.python.org/3/library/pathlib.html), [html.parser](https://docs.python.org/3/library/html.parser.html), [http.server](https://docs.python.org/3/library/http.server.html), [MDN HTML](https://developer.mozilla.org/docs/Web/HTML), [MDN CSS](https://developer.mozilla.org/docs/Web/CSS) e [WCAG](https://www.w3.org/WAI/standards-guidelines/wcag/).
 
 Phase 3 bloqueia revisão/reaprovação de artefatos com destino reservado, inclusive após falhas ou interrupções. Resolva o deployment existente pelo [fluxo de recuperação](cpanel-deployment.md); não regenere os bytes aprovados para contornar uma falha remota.
+
+## Art-directed generation
+
+The optional [art-direction workflow](art-direction.md) validates a creative plan
+and applies it through the existing generator and revision transaction. Existing
+callers remain compatible; plans and visual receipts require no database migration.

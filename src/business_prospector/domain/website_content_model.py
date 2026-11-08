@@ -109,10 +109,13 @@ class WebsiteContentModel:
         disclosure = "Demonstração independente da Gapps.Tech. Não é o site oficial e não implica aprovação do negócio."
         if brief.source == "synthetic_fixture":
             disclosure += " Negócio e dados inteiramente fictícios."
+        planned = brief.art_direction
+        if planned:
+            primary = ContactAction(planned['primary_action'], primary.url, primary.external)
         return cls(brief.business_name, brief.city, display_name(brief.business_name),
-                   hero_headline(strategy.category_policy, bool(facts.values("booking_url"))),
+                   planned["headline"]["text"] if planned else hero_headline(strategy.category_policy, bool(facts.values("booking_url"))),
                    {"dentist": "Odontologia", "restaurant": "À mesa", "beauty_salon": "Beleza & estilo", "fitness": "Movimento"}.get(strategy.category_policy, "Perto de você"),
-                   supporting_copy(strategy.category_policy, bool(facts.values("services")), bool(facts.values("menu"))),
+                   planned["supporting_copy"]["text"] if planned else supporting_copy(strategy.category_policy, bool(facts.values("services")), bool(facts.values("menu"))),
                    tuple(sections), primary, tuple(secondary), disclosure)
 
     def to_dict(self) -> dict[str, Any]:
