@@ -13,6 +13,7 @@ from business_prospector.domain.site_assets import MAX_IMAGE_BYTES
 from business_prospector.domain.stock_photography import StockPhoto, StockSearchPlan
 from .stock_http import StockProviderUnavailable, StockSearchCache, _request
 
+DEFAULT_USER_AGENT = 'BusinessProspector/0.1.1'
 LICENSE_URL = 'https://pixabay.com/service/license-summary/'
 
 
@@ -49,9 +50,14 @@ class PixabayStockPhotoProvider:
 
     def __init__(self, api_key: str, cache_root: Path, *,
                  request: Callable[[str, dict[str, str], int], tuple[bytes, str]] = _request,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 user_agent: str = DEFAULT_USER_AGENT) -> None:
         if not api_key or any(c.isspace() for c in api_key):
             raise ValidationError('Pixabay API key is not configured')
+        if (not isinstance(user_agent, str) or not user_agent.strip() or len(user_agent) > 200
+                or any(not 32 <= ord(c) <= 126 for c in user_agent)):
+            raise ValidationError('invalid stock application User-Agent')
+        self._user_agent = user_agent
         self._key, self._request = api_key, request
         self._cache = StockSearchCache(cache_root, clock)
 
@@ -64,7 +70,7 @@ class PixabayStockPhotoProvider:
 
         def fetch() -> dict:
             # Pixabay requires the key in its API query. Never persist/log this URL or raw response.
-            raw, mime = self._request('https://pixabay.com/api/?' + urlencode({'key': self._key}) + '&' + query, {}, 1024 * 1024)
+            raw, mime = self._request('https://pixabay.com/api/?' + urlencode({'key': self._key}) + '&' + query, {'User-Agent': self._user_agent}, 1024 * 1024)
             if mime != 'application/json':
                 raise StockProviderUnavailable('invalid stock response type')
             payload = json.loads(raw)
@@ -98,5 +104,5 @@ class PixabayStockPhotoProvider:
         if photo.provider != 'pixabay' or photo.license_url != LICENSE_URL:
             raise ValidationError('wrong stock provider or license')
         url = _pixabay_url(photo.download_url, image=True)
-        content, mime = self._request(url, {}, MAX_IMAGE_BYTES)
+        content, mime = self._request(url, {'User-Agent': self._user_agent}, MAX_IMAGE_BYTES)
         return DownloadedImage(content, mime)

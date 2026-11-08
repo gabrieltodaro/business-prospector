@@ -469,8 +469,11 @@ def search_stock_photos(lead_id: int, reviewed_content: dict[str, Any] | None = 
     from business_prospector.infrastructure.stock_http import StockProviderUnavailable
     try:
         return _response("search_stock_photos", _stock_service().search(lead_id, reviewed_content))
-    except StockProviderUnavailable:
-        return _response("search_stock_photos", {"status": "unavailable", "photos": [], "fallback": "minimal_typography"})
+    except StockProviderUnavailable as exc:
+        data = {"status": "unavailable", "photos": [], "fallback": "minimal_typography"}
+        if exc.http_status is not None:
+            data["http_status"] = exc.http_status
+        return _response("search_stock_photos", data)
     except (ProspectorError, TypeError, ValueError, OSError, sqlite3.Error) as exc:
         return _response("search_stock_photos", error=str(exc))
 

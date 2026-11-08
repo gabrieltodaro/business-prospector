@@ -102,8 +102,15 @@ licensing, hosting and account-verification limits.
 candidate metadata in `stock-cache/pixabay`; the legacy Pexels cache stays in
 `stock-cache`. Transport rejects redirects, sanitizes errors and honors longer
 `Retry-After` values. Pixabay's required query-string key is sent only to its API;
-image downloads carry no credentials. Images are restricted to fixed provider
-origins, then validated for MIME, signature, size, checksum and safe inventory paths.
+image downloads carry no credentials. Pixabay API and image requests identify the
+application with `User-Agent: BusinessProspector/0.1.1`. Embedders can override the
+adapter's `user_agent` constructor argument with a descriptive ASCII application
+identifier; no runtime configuration is needed for the default. HTTP status codes
+survive sanitized errors, cooldown persistence and the MCP `http_status` field.
+A 403 means the request was refused; it does not establish that credentials are
+invalid. Existing cooldowns without status metadata remain compatible and expire
+normally; this update does not clear cooldowns or automatically retry requests.
+Images are restricted to fixed provider origins, then validated for MIME, signature, size, checksum and safe inventory paths.
 Immutable keys and atomic manifest replacement preserve existing assets on failure.
 Generation consumes local bytes and retains all commercial approval boundaries.
 

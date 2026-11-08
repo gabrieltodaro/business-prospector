@@ -14,8 +14,10 @@ from business_prospector.domain.exceptions import ValidationError
 
 
 class StockProviderUnavailable(ValidationError):
-    def __init__(self, message: str, retry_after: float = 3600) -> None:
-        super().__init__(message)
+    def __init__(self, message: str, retry_after: float = 3600, *, http_status: int | None = None) -> None:
+        # Cooldown metadata is untrusted. Retain only a numeric HTTP status, never a response body.
+        self.http_status = http_status if type(http_status) is int and 100 <= http_status <= 599 else None
+        super().__init__(f'{message} (HTTP {self.http_status})' if self.http_status is not None else message)
         self.retry_after = retry_after
 
 
@@ -42,7 +44,7 @@ def _request(url: str, headers: dict[str, str], maximum: int) -> tuple[bytes, st
                 retry = max(retry, parsedate_to_datetime(value).timestamp() - time.time())
             except (ValueError, TypeError, OverflowError):
                 pass
-        raise StockProviderUnavailable(f'stock provider HTTP {exc.code}; retry later', retry) from None
+        raise StockProviderUnavailable('stock provider request failed; retry later', retry, http_status=exc.code) from None
     except (URLError, OSError, TimeoutError):
         raise StockProviderUnavailable('stock provider unavailable; retry later') from None
 
@@ -77,19 +79,24 @@ class StockSearchCache:
         if payload is None:
             if cooldown.exists() and cooldown.stat().st_size <= 1024:
                 try:
-                    retry_at = json.loads(cooldown.read_text()).get('retry_at', 0)
+                    failure = json.loads(cooldown.read_text())
+                    retry_at = failure.get('retry_at', 0)
+                    http_status = failure.get('http_status')
                 except (ValueError, TypeError, AttributeError):
-                    retry_at = now + 3600
+                    retry_at, http_status = now + 3600, None
                 if not isinstance(retry_at, (int, float)) or now < retry_at:
-                    raise StockProviderUnavailable('stock provider cooling down; use typography or retry later')
+                    raise StockProviderUnavailable('stock provider cooling down; use typography or retry later', http_status=http_status)
             try:
                 payload = fetch()
                 if not isinstance(payload, dict) or not isinstance(payload.get(field), list) or len(payload[field]) > 15:
                     raise StockProviderUnavailable('invalid stock search response')
             except (StockProviderUnavailable, ValueError) as exc:
                 # Across MCP calls, avoid hammering unavailable/rate-limited providers.
-                cooldown.write_text(json.dumps({'retry_at': now + getattr(exc, 'retry_after', 3600)}))
-                raise StockProviderUnavailable('stock search unavailable; use typography or retry later') from None
+                retry_after = getattr(exc, 'retry_after', 3600)
+                http_status = getattr(exc, 'http_status', None)
+                cooldown.write_text(json.dumps({'retry_at': now + retry_after, 'http_status': http_status}))
+                raise StockProviderUnavailable('stock search unavailable; use typography or retry later',
+                    retry_after, http_status=http_status) from None
             temporary = path.with_suffix('.tmp')
             if temporary.is_symlink():
                 raise ValidationError('stock cache entry cannot be a symlink')

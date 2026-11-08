@@ -45,7 +45,7 @@ def test_pixabay_cache_secret_isolation_orientation_and_local_download(tmp_path)
     now[0] += 86399
     assert provider.search(plan) == (selected,) and len(calls) == 1
     assert provider.download(selected).content == PNG
-    assert calls[1][1] == {} and 'key=' not in calls[1][0]
+    assert calls[1][1] == {'User-Agent': 'BusinessProspector/0.1.1'} and 'key=' not in calls[1][0]
     assert all('synthetic-private-key' not in p.read_text() and 'do not persist' not in p.read_text() for p in tmp_path.iterdir())
     now[0] += 1
     assert provider.search(plan) and len(calls) == 3
@@ -172,3 +172,91 @@ def test_pixabay_adapter_through_review_generation_and_inventory(tmp_path):
     manifest['assets'][0]['stock']['illustrative'] = False
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValidationError): capture_artifact(path)
+
+
+@pytest.mark.parametrize('options,expected_agent', [({}, 'BusinessProspector/0.1.1'),
+    ({'user_agent': 'BusinessProspectorIntegration/1.0'}, 'BusinessProspectorIntegration/1.0')])
+def test_real_http_requests_identify_application_and_preserve_request_contract(tmp_path, monkeypatch, options, expected_agent):
+    from business_prospector.domain.site_assets import MAX_IMAGE_BYTES
+    requests, reads = [], []
+    class Response(io.BytesIO):
+        def __init__(self, content, mime):
+            super().__init__(content)
+            self.headers = Message()
+            self.headers['Content-Type'] = mime
+        def read(self, maximum):
+            reads.append(maximum)
+            return super().read(maximum)
+    class Opener:
+        def open(self, request, *, timeout):
+            requests.append((request, timeout))
+            if urlsplit(request.full_url).path == '/api/':
+                return Response(*response([hit()]))
+            return Response(PNG, 'image/png')
+    monkeypatch.setattr(stock_http, 'build_opener', lambda *handlers: Opener())
+    provider = PixabayStockPhotoProvider('synthetic-private-key', tmp_path, **options)
+    photo = provider.search(stock_search_plan('dentist', ()))[0]
+    assert provider.download(photo).content == PNG
+    assert len(requests) == 2 and reads == [1024 * 1024 + 1, MAX_IMAGE_BYTES + 1]
+    for request, timeout in requests:
+        assert request.get_header('User-agent') == expected_agent
+        assert request.get_header('Authorization') is None
+        assert request.get_method() == 'GET' and timeout == 15
+    assert parse_qs(urlsplit(requests[0][0].full_url).query) == {
+        'key': ['synthetic-private-key'], 'q': ['dental instruments still life'],
+        'orientation': ['horizontal'], 'image_type': ['photo'], 'safesearch': ['true'],
+        'lang': ['en'], 'per_page': ['15'], 'min_width': ['800'], 'min_height': ['800']}
+    assert requests[1][0].full_url == photo.download_url
+    assert 'key=' not in requests[1][0].full_url
+
+
+@pytest.mark.parametrize('agent', ['', '   ', 'App/1\r\nAuthorization: secret', 'App/1\x00', 'App/é', 'A' * 201, None])
+def test_user_agent_rejects_invalid_header_values(tmp_path, agent):
+    with pytest.raises(ValidationError, match='invalid stock application User-Agent'):
+        PixabayStockPhotoProvider('test', tmp_path, user_agent=agent)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('status', [400, 401, 403, 429, 500, None])
+def test_http_status_survives_search_cooldown_and_mcp_without_exposing_secrets(tmp_path, monkeypatch, status):
+    from types import SimpleNamespace
+    from urllib.error import URLError
+    from business_prospector.mcp import server
+    calls = []
+    headers = Message()
+    headers['Retry-After'] = '7200'
+    class Opener:
+        def open(self, request, *, timeout):
+            calls.append(request)
+            if status is None:
+                raise URLError('PRIVATE network diagnostic')
+            raise HTTPError(request.full_url, status, 'PRIVATE response', headers, io.BytesIO(b'PRIVATE Cloudflare 1010'))
+    monkeypatch.setattr(stock_http, 'build_opener', lambda *a: Opener())
+    provider = PixabayStockPhotoProvider('PRIVATE', tmp_path, clock=lambda: 10000)
+    with pytest.raises(stock_http.StockProviderUnavailable) as error:
+        provider.search(stock_search_plan('dentist', ()))
+    assert error.value.http_status == status
+    assert error.value.retry_after == (7200 if status is not None else 3600)
+    assert 'PRIVATE' not in str(error.value) and 'invalid' not in str(error.value).lower()
+    if status is not None:
+        assert f'HTTP {status}' in str(error.value)
+    # Re-created adapters retain status during cooldown, with no additional request.
+    restored = PixabayStockPhotoProvider('PRIVATE', tmp_path, clock=lambda: 10001)
+    service = SimpleNamespace(search=lambda *args: restored.search(stock_search_plan('dentist', ())))
+    monkeypatch.setattr(server, '_stock_service', lambda: service)
+    result = server.search_stock_photos(1)
+    assert result['ok'] and result['data']['status'] == 'unavailable'
+    assert result['data']['fallback'] == 'minimal_typography'
+    assert result['data'].get('http_status') == status and len(calls) == 1
+    assert 'PRIVATE' not in json.dumps(result)
+    assert 'PRIVATE' not in (tmp_path / 'cooldown.json').read_text()
+
+
+@pytest.mark.parametrize('metadata', [{}, {'http_status': 'PRIVATE'}, {'http_status': True}, {'http_status': 999}])
+def test_old_or_invalid_cooldown_status_is_not_exposed(tmp_path, metadata):
+    (tmp_path / 'cooldown.json').write_text(json.dumps({'retry_at': 20000} | metadata))
+    provider = PixabayStockPhotoProvider('test', tmp_path, clock=lambda: 10000,
+        request=lambda *args: pytest.fail('cooldown must prevent requests'))
+    with pytest.raises(stock_http.StockProviderUnavailable) as error:
+        provider.search(stock_search_plan('dentist', ()))
+    assert error.value.http_status is None and 'PRIVATE' not in str(error.value)
